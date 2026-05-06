@@ -551,10 +551,19 @@ def doc_analyze(
         inline_formula_enable: bool = True,
         model_path: str | None = None,
         server_url: str | None = None,
+        layout_server_url: str | None = None,
+        recognition_server_url: str | None = None,
         **kwargs,
 ):
     if predictor is None:
-        predictor = ModelSingleton().get_model(backend, model_path, server_url, **kwargs)
+        predictor = ModelSingleton().get_model(
+            backend,
+            model_path,
+            server_url,
+            layout_server_url,
+            recognition_server_url,
+            **kwargs,
+        )
     predictor = _maybe_enable_serial_execution(predictor, backend)
 
     device = get_device()
@@ -679,10 +688,19 @@ async def aio_doc_analyze(
     inline_formula_enable: bool = True,
     model_path: str | None = None,
     server_url: str | None = None,
+    layout_server_url: str | None = None,
+    recognition_server_url: str | None = None,
     **kwargs,
 ):
     if predictor is None:
-        predictor = await _get_model_async(backend, model_path, server_url, **kwargs)
+        predictor = await _get_model_async(
+            backend,
+            model_path,
+            server_url,
+            layout_server_url,
+            recognition_server_url,
+            **kwargs,
+        )
     predictor = _maybe_enable_serial_execution(predictor, backend)
 
     device = get_device()

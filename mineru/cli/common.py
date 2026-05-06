@@ -386,6 +386,8 @@ async def _async_process_vlm(
         f_dump_content_list,
         f_make_md_mode,
         server_url=None,
+        layout_server_url=None,
+        recognition_server_url=None,
         **kwargs,
 ):
     """异步处理VLM后端逻辑"""
@@ -393,6 +395,8 @@ async def _async_process_vlm(
     f_draw_span_bbox = False
     if not backend.endswith("client"):
         server_url = None
+        layout_server_url = None
+        recognition_server_url = None
 
     for idx, pdf_bytes in enumerate(pdf_bytes_list):
         pdf_file_name = pdf_file_names[idx]
@@ -400,7 +404,13 @@ async def _async_process_vlm(
         image_writer, md_writer = FileBasedDataWriter(local_image_dir), FileBasedDataWriter(local_md_dir)
 
         middle_json, infer_result = await aio_vlm_doc_analyze(
-            pdf_bytes, image_writer=image_writer, backend=backend, server_url=server_url, **kwargs,
+            pdf_bytes,
+            image_writer=image_writer,
+            backend=backend,
+            server_url=server_url,
+            layout_server_url=layout_server_url,
+            recognition_server_url=recognition_server_url,
+            **kwargs,
         )
 
         pdf_info = middle_json["pdf_info"]
@@ -427,6 +437,8 @@ def _process_vlm(
         f_dump_content_list,
         f_make_md_mode,
         server_url=None,
+        layout_server_url=None,
+        recognition_server_url=None,
         **kwargs,
 ):
     """同步处理VLM后端逻辑"""
@@ -434,6 +446,8 @@ def _process_vlm(
     f_draw_span_bbox = False
     if not backend.endswith("client"):
         server_url = None
+        layout_server_url = None
+        recognition_server_url = None
 
     for idx, pdf_bytes in enumerate(pdf_bytes_list):
         pdf_file_name = pdf_file_names[idx]
@@ -441,7 +455,13 @@ def _process_vlm(
         image_writer, md_writer = FileBasedDataWriter(local_image_dir), FileBasedDataWriter(local_md_dir)
 
         middle_json, infer_result = vlm_doc_analyze(
-            pdf_bytes, image_writer=image_writer, backend=backend, server_url=server_url, **kwargs,
+            pdf_bytes,
+            image_writer=image_writer,
+            backend=backend,
+            server_url=server_url,
+            layout_server_url=layout_server_url,
+            recognition_server_url=recognition_server_url,
+            **kwargs,
         )
 
         pdf_info = middle_json["pdf_info"]
@@ -471,6 +491,8 @@ def _process_hybrid(
         f_dump_content_list,
         f_make_md_mode,
         server_url=None,
+        layout_server_url=None,
+        recognition_server_url=None,
         **kwargs,
 ):
     hybrid_doc_analyze = _load_hybrid_analyze_entrypoint(
@@ -480,6 +502,8 @@ def _process_hybrid(
     """同步处理hybrid后端逻辑"""
     if not backend.endswith("client"):
         server_url = None
+        layout_server_url = None
+        recognition_server_url = None
 
     for idx, (pdf_bytes, lang) in enumerate(zip(pdf_bytes_list, h_lang_list)):
         pdf_file_name = pdf_file_names[idx]
@@ -494,6 +518,8 @@ def _process_hybrid(
             language=lang,
             inline_formula_enable=inline_formula_enable,
             server_url=server_url,
+            layout_server_url=layout_server_url,
+            recognition_server_url=recognition_server_url,
             **kwargs,
         )
 
@@ -527,6 +553,8 @@ async def _async_process_hybrid(
         f_dump_content_list,
         f_make_md_mode,
         server_url=None,
+        layout_server_url=None,
+        recognition_server_url=None,
         **kwargs,
 ):
     aio_hybrid_doc_analyze = _load_hybrid_analyze_entrypoint(
@@ -536,6 +564,8 @@ async def _async_process_hybrid(
     """异步处理hybrid后端逻辑"""
     if not backend.endswith("client"):
         server_url = None
+        layout_server_url = None
+        recognition_server_url = None
 
     for idx, (pdf_bytes, lang) in enumerate(zip(pdf_bytes_list, h_lang_list)):
         pdf_file_name = pdf_file_names[idx]
@@ -550,6 +580,8 @@ async def _async_process_hybrid(
             language=lang,
             inline_formula_enable=inline_formula_enable,
             server_url=server_url,
+            layout_server_url=layout_server_url,
+            recognition_server_url=recognition_server_url,
             **kwargs,
         )
 
@@ -626,6 +658,8 @@ def do_parse(
         formula_enable=True,
         table_enable=True,
         server_url=None,
+        layout_server_url=None,
+        recognition_server_url=None,
         f_draw_layout_bbox=True,
         f_draw_span_bbox=True,
         f_dump_md=True,
@@ -684,7 +718,7 @@ def do_parse(
                 output_dir, pdf_file_names, pdf_bytes_list, backend,
                 f_draw_layout_bbox, f_draw_span_bbox, f_dump_md, f_dump_middle_json,
                 f_dump_model_output, f_dump_orig_pdf, f_dump_content_list, f_make_md_mode,
-                server_url, **kwargs,
+                server_url, layout_server_url, recognition_server_url, **kwargs,
             )
         elif backend.startswith("hybrid-"):
             ensure_backend_dependencies(backend)
@@ -704,7 +738,7 @@ def do_parse(
                 output_dir, pdf_file_names, pdf_bytes_list, p_lang_list, parse_method, formula_enable, backend,
                 f_draw_layout_bbox, f_draw_span_bbox, f_dump_md, f_dump_middle_json,
                 f_dump_model_output, f_dump_orig_pdf, f_dump_content_list, f_make_md_mode,
-                server_url, **kwargs,
+                server_url, layout_server_url, recognition_server_url, **kwargs,
             )
 
 
@@ -718,6 +752,8 @@ async def aio_do_parse(
         formula_enable=True,
         table_enable=True,
         server_url=None,
+        layout_server_url=None,
+        recognition_server_url=None,
         f_draw_layout_bbox=True,
         f_draw_span_bbox=True,
         f_dump_md=True,
@@ -777,7 +813,7 @@ async def aio_do_parse(
                 output_dir, pdf_file_names, pdf_bytes_list, backend,
                 f_draw_layout_bbox, f_draw_span_bbox, f_dump_md, f_dump_middle_json,
                 f_dump_model_output, f_dump_orig_pdf, f_dump_content_list, f_make_md_mode,
-                server_url, **kwargs,
+                server_url, layout_server_url, recognition_server_url, **kwargs,
             )
         elif backend.startswith("hybrid-"):
             ensure_backend_dependencies(backend)
@@ -796,7 +832,7 @@ async def aio_do_parse(
                 output_dir, pdf_file_names, pdf_bytes_list, p_lang_list, parse_method, formula_enable, backend,
                 f_draw_layout_bbox, f_draw_span_bbox, f_dump_md, f_dump_middle_json,
                 f_dump_model_output, f_dump_orig_pdf, f_dump_content_list, f_make_md_mode,
-                server_url, **kwargs,
+                server_url, layout_server_url, recognition_server_url, **kwargs,
             )
 
 

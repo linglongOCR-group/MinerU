@@ -1100,6 +1100,8 @@ async def submit_router_task(
         ),
         backend=payload.get_field_value("backend") or "",
         server_url=payload.get_field_value("server_url"),
+        layout_server_url=payload.get_field_value("layout_server_url"),
+        recognition_server_url=payload.get_field_value("recognition_server_url"),
     )
     worker_pool: WorkerPool = request.app.state.worker_pool
     registry: RouterTaskRegistry = request.app.state.router_task_registry
@@ -1462,8 +1464,8 @@ app = create_app()
     "--allow-public-http-client",
     is_flag=True,
     help=(
-        "Allow *-http-client backends and server_url even when binding the router "
-        "to 0.0.0.0 or ::."
+        "Allow *-http-client backends and caller-supplied HTTP inference URLs "
+        "even when binding the router to 0.0.0.0 or ::."
     ),
 )
 @click.option(

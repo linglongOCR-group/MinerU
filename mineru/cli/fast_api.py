@@ -147,6 +147,8 @@ class ParseRequestOptions:
     formula_enable: bool
     table_enable: bool
     server_url: Optional[str]
+    layout_server_url: Optional[str]
+    recognition_server_url: Optional[str]
     return_md: bool
     return_middle_json: bool
     return_model_output: bool
@@ -178,6 +180,8 @@ class AsyncParseTask:
     formula_enable: bool
     table_enable: bool
     server_url: Optional[str]
+    layout_server_url: Optional[str]
+    recognition_server_url: Optional[str]
     return_md: bool
     return_middle_json: bool
     return_model_output: bool
@@ -848,6 +852,18 @@ async def parse_request_form(
             description="(Adapted only for <vlm/hybrid>-http-client backend)openai compatible server url, e.g., http://127.0.0.1:30000",
         ),
     ] = None,
+    layout_server_url: Annotated[
+        Optional[str],
+        Form(
+            description="(Adapted only for <vlm/hybrid>-http-client backend)openai compatible server url for layout detection stage.",
+        ),
+    ] = None,
+    recognition_server_url: Annotated[
+        Optional[str],
+        Form(
+            description="(Adapted only for <vlm/hybrid>-http-client backend)openai compatible server url for recognition stage.",
+        ),
+    ] = None,
     return_md: Annotated[
         bool,
         Form(description="Return markdown content in response"),
@@ -899,6 +915,8 @@ async def parse_request_form(
         ),
         backend=backend,
         server_url=server_url,
+        layout_server_url=layout_server_url,
+        recognition_server_url=recognition_server_url,
     )
     effective_return_original_file = return_original_file and response_format_zip
     return ParseRequestOptions(
@@ -909,6 +927,8 @@ async def parse_request_form(
         formula_enable=formula_enable,
         table_enable=table_enable,
         server_url=server_url,
+        layout_server_url=layout_server_url,
+        recognition_server_url=recognition_server_url,
         return_md=return_md,
         return_middle_json=return_middle_json,
         return_model_output=return_model_output,
@@ -1016,6 +1036,8 @@ async def run_parse_job(
         formula_enable=request_options.formula_enable,
         table_enable=request_options.table_enable,
         server_url=request_options.server_url,
+        layout_server_url=request_options.layout_server_url,
+        recognition_server_url=request_options.recognition_server_url,
         f_draw_layout_bbox=False,
         f_draw_span_bbox=False,
         f_dump_md=request_options.return_md,
@@ -1068,6 +1090,8 @@ async def create_async_parse_task(
             formula_enable=request_options.formula_enable,
             table_enable=request_options.table_enable,
             server_url=request_options.server_url,
+            layout_server_url=request_options.layout_server_url,
+            recognition_server_url=request_options.recognition_server_url,
             return_md=request_options.return_md,
             return_middle_json=request_options.return_middle_json,
             return_model_output=request_options.return_model_output,
@@ -1570,8 +1594,8 @@ async def health_check():
     "--allow-public-http-client",
     is_flag=True,
     help=(
-        "Allow *-http-client backends and server_url even when binding the API to "
-        "0.0.0.0 or ::."
+        "Allow *-http-client backends and caller-supplied HTTP inference URLs "
+        "even when binding the API to 0.0.0.0 or ::."
     ),
 )
 @click.option(

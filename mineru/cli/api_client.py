@@ -788,6 +788,8 @@ def build_parse_request_form_data(
     server_url: Optional[str],
     start_page_id: int,
     end_page_id: Optional[int],
+    layout_server_url: Optional[str] = None,
+    recognition_server_url: Optional[str] = None,
     *,
     return_md: bool,
     return_middle_json: bool,
@@ -816,6 +818,10 @@ def build_parse_request_form_data(
     }
     if server_url:
         data["server_url"] = server_url
+    if layout_server_url:
+        data["layout_server_url"] = layout_server_url
+    if recognition_server_url:
+        data["recognition_server_url"] = recognition_server_url
     return data
 
 

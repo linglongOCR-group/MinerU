@@ -56,9 +56,17 @@ class ModelSingleton:
         backend: str,
         model_path: str | None,
         server_url: str | None,
+        layout_server_url: str | None = None,
+        recognition_server_url: str | None = None,
         **kwargs,
     ) -> MinerUClient:
-        key = (backend, model_path, server_url)
+        key = (
+            backend,
+            model_path,
+            server_url,
+            layout_server_url if backend == "http-client" else None,
+            recognition_server_url if backend == "http-client" else None,
+        )
         with self._lock:
             if key not in self._models:
                 start_time = time.time()
@@ -227,6 +235,8 @@ class ModelSingleton:
                     vllm_llm=vllm_llm,
                     vllm_async_llm=vllm_async_llm,
                     server_url=server_url,
+                    layout_server_url=layout_server_url,
+                    recognition_server_url=recognition_server_url,
                     batch_size=batch_size,
                     max_concurrency=max_concurrency,
                     http_timeout=http_timeout,
@@ -266,6 +276,8 @@ async def _get_model_async(
     backend: str,
     model_path: str | None,
     server_url: str | None,
+    layout_server_url: str | None = None,
+    recognition_server_url: str | None = None,
     **kwargs,
 ) -> MinerUClient:
     return await asyncio.to_thread(
@@ -273,6 +285,8 @@ async def _get_model_async(
         backend,
         model_path,
         server_url,
+        layout_server_url,
+        recognition_server_url,
         **kwargs,
     )
 
@@ -427,10 +441,19 @@ def doc_analyze(
     backend="transformers",
     model_path: str | None = None,
     server_url: str | None = None,
+    layout_server_url: str | None = None,
+    recognition_server_url: str | None = None,
     **kwargs,
 ):
     if predictor is None:
-        predictor = ModelSingleton().get_model(backend, model_path, server_url, **kwargs)
+        predictor = ModelSingleton().get_model(
+            backend,
+            model_path,
+            server_url,
+            layout_server_url,
+            recognition_server_url,
+            **kwargs,
+        )
     predictor = _maybe_enable_serial_execution(predictor, backend)
 
     pdf_doc = open_pdfium_document(pdfium.PdfDocument, pdf_bytes)
@@ -519,10 +542,19 @@ async def aio_doc_analyze(
     backend="transformers",
     model_path: str | None = None,
     server_url: str | None = None,
+    layout_server_url: str | None = None,
+    recognition_server_url: str | None = None,
     **kwargs,
 ):
     if predictor is None:
-        predictor = await _get_model_async(backend, model_path, server_url, **kwargs)
+        predictor = await _get_model_async(
+            backend,
+            model_path,
+            server_url,
+            layout_server_url,
+            recognition_server_url,
+            **kwargs,
+        )
     predictor = _maybe_enable_serial_execution(predictor, backend)
 
     pdf_doc = open_pdfium_document(pdfium.PdfDocument, pdf_bytes)

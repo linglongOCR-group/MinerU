@@ -617,6 +617,8 @@ async def _run_to_markdown_job(
     language="ch",
     backend="pipeline",
     url=None,
+    layout_url=None,
+    recognition_url=None,
     api_url=None,
     status_callback: Callable[[str], None] | None = None,
 ):
@@ -641,6 +643,8 @@ async def _run_to_markdown_job(
         formula_enable=formula_enable,
         table_enable=table_enable,
         server_url=url,
+        layout_server_url=layout_url,
+        recognition_server_url=recognition_url,
         start_page_id=0,
         end_page_id=end_pages - 1,
         return_md=True,
@@ -756,6 +760,8 @@ async def stream_to_markdown(
     language="ch",
     backend="pipeline",
     url=None,
+    layout_url=None,
+    recognition_url=None,
     api_url=None,
 ):
     status_state = StatusPanelState()
@@ -784,6 +790,8 @@ async def stream_to_markdown(
                 language=language,
                 backend=backend,
                 url=url,
+                layout_url=layout_url,
+                recognition_url=recognition_url,
                 api_url=api_url,
                 status_callback=enqueue_status,
             )
@@ -1091,6 +1099,10 @@ def main(ctx,
             "backend": "Backend",
             "server_url": "Server URL",
             "server_url_info": "OpenAI-compatible server URL for http-client backend.",
+            "layout_server_url": "Layout URL",
+            "layout_server_url_info": "OpenAI-compatible server URL for layout detection. Leave blank to use Server URL.",
+            "recognition_server_url": "Recognition URL",
+            "recognition_server_url_info": "OpenAI-compatible server URL for recognition. Leave blank to use Server URL.",
             "recognition_options": "**Recognition Options:**",
             "table_enable": "Enable table recognition",
             "table_info": "If disabled, tables will be shown as images.",
@@ -1123,6 +1135,10 @@ def main(ctx,
             "backend": "解析后端",
             "server_url": "服务器地址",
             "server_url_info": "http-client 后端的 OpenAI 兼容服务器地址。",
+            "layout_server_url": "版面分析地址",
+            "layout_server_url_info": "版面分析阶段的 OpenAI 兼容服务器地址。留空则使用服务器地址。",
+            "recognition_server_url": "识别地址",
+            "recognition_server_url_info": "识别阶段的 OpenAI 兼容服务器地址。留空则使用服务器地址。",
             "recognition_options": "**识别选项：**",
             "table_enable": "启用表格识别",
             "table_info": "禁用后，表格将显示为图片。",
@@ -1226,6 +1242,8 @@ def main(ctx,
         language="ch",
         backend="pipeline",
         url=None,
+        layout_url=None,
+        recognition_url=None,
     ):
         async for update in stream_to_markdown(
             file_path=file_path,
@@ -1236,6 +1254,8 @@ def main(ctx,
             language=language,
             backend=backend,
             url=url,
+            layout_url=layout_url,
+            recognition_url=recognition_url,
             api_url=api_url,
         ):
             yield update
@@ -1259,6 +1279,8 @@ def main(ctx,
                         backend = gr.Dropdown(drop_list, label=i18n("backend"), value=preferred_option, info=get_backend_info(preferred_option))
                     with gr.Row(visible=False) as client_options:
                         url = gr.Textbox(label=i18n("server_url"), value='http://localhost:30000', placeholder='http://localhost:30000', info=i18n("server_url_info"))
+                        layout_url = gr.Textbox(label=i18n("layout_server_url"), value='', placeholder='http://localhost:30000', info=i18n("layout_server_url_info"))
+                        recognition_url = gr.Textbox(label=i18n("recognition_server_url"), value='', placeholder='http://localhost:30000', info=i18n("recognition_server_url_info"))
                     with gr.Row(equal_height=True):
                         with gr.Column():
                             gr.Markdown(i18n("recognition_options"))
@@ -1382,7 +1404,7 @@ def main(ctx,
         )
         change_bu.click(
             fn=convert_to_markdown_stream,
-            inputs=[input_file, max_pages, is_ocr, formula_enable, table_enable, language, backend, url],
+            inputs=[input_file, max_pages, is_ocr, formula_enable, table_enable, language, backend, url, layout_url, recognition_url],
             outputs=[status_box, output_file, md, md_text, doc_show],
             **_to_md_api_kwargs
         )

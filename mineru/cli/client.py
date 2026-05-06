@@ -620,6 +620,8 @@ def build_request_form_data(
     formula_enable: bool,
     table_enable: bool,
     server_url: Optional[str],
+    layout_server_url: Optional[str],
+    recognition_server_url: Optional[str],
     start_page_id: int,
     end_page_id: Optional[int],
 ) -> dict[str, str | list[str]]:
@@ -630,6 +632,8 @@ def build_request_form_data(
         formula_enable=formula_enable,
         table_enable=table_enable,
         server_url=server_url,
+        layout_server_url=layout_server_url,
+        recognition_server_url=recognition_server_url,
         start_page_id=start_page_id,
         end_page_id=end_page_id,
         return_md=True,
@@ -838,6 +842,8 @@ async def run_orchestrated_cli(
     backend: str,
     lang: str,
     server_url: Optional[str],
+    layout_server_url: Optional[str],
+    recognition_server_url: Optional[str],
     api_url: Optional[str],
     start_page_id: int,
     end_page_id: Optional[int],
@@ -910,6 +916,8 @@ async def run_orchestrated_cli(
                 formula_enable=formula_enable,
                 table_enable=table_enable,
                 server_url=server_url,
+                layout_server_url=layout_server_url,
+                recognition_server_url=recognition_server_url,
                 start_page_id=start_page_id,
                 end_page_id=end_page_id,
             )
@@ -1053,8 +1061,23 @@ async def run_orchestrated_cli(
     type=str,
     default=None,
     help="""
-    When the backend is `<vlm/hybrid>-http-client`, you need to specify the server_url, for example:`http://127.0.0.1:30000`
+    Shared OpenAI-compatible server URL for `<vlm/hybrid>-http-client`, for example:`http://127.0.0.1:30000`.
+    Use --layout-url or --recognition-url to override one stage.
     """,
+)
+@click.option(
+    "--layout-url",
+    "layout_server_url",
+    type=str,
+    default=None,
+    help="OpenAI-compatible server URL for the MinerU 2.5 VLM layout detection stage.",
+)
+@click.option(
+    "--recognition-url",
+    "recognition_server_url",
+    type=str,
+    default=None,
+    help="OpenAI-compatible server URL for the MinerU 2.5 VLM recognition stage.",
 )
 @click.option(
     "-s",
@@ -1097,6 +1120,8 @@ def main(
     backend: str,
     lang: str,
     server_url: Optional[str],
+    layout_server_url: Optional[str],
+    recognition_server_url: Optional[str],
     start_page_id: int,
     end_page_id: Optional[int],
     formula_enable: bool,
@@ -1110,6 +1135,8 @@ def main(
             backend=backend,
             lang=lang,
             server_url=server_url,
+            layout_server_url=layout_server_url,
+            recognition_server_url=recognition_server_url,
             api_url=api_url,
             start_page_id=start_page_id,
             end_page_id=end_page_id,

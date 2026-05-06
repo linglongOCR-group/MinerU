@@ -58,6 +58,8 @@ def build_form_data(
         formula_enable=formula_enable,
         table_enable=table_enable,
         server_url=server_url,
+        layout_server_url=None,
+        recognition_server_url=None,
         start_page_id=start_page_id,
         end_page_id=end_page_id,
         return_md=True,
