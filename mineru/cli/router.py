@@ -4,6 +4,7 @@ import json
 import os
 import random
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -12,12 +13,12 @@ from contextlib import ExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import Annotated, Any, Optional, Sequence
 
 import click
 import httpx
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from loguru import logger
@@ -40,6 +41,7 @@ from mineru.cli.api_client import (
     response_detail,
 )
 from mineru.cli.api_protocol import API_PROTOCOL_VERSION
+from mineru.cli.api_request import ParseRequestOptions, parse_request_form
 from mineru.cli.common import normalize_upload_filename
 from mineru.cli.public_http_client_policy import (
     configure_public_http_client_policy,
@@ -190,15 +192,63 @@ def resolve_connect_host(host: str) -> str:
     return host
 
 
-def detect_visible_cuda_devices() -> list[str]:
-    configured_visible_devices = os.getenv("CUDA_VISIBLE_DEVICES")
-    if configured_visible_devices is not None:
-        return [
-            item.strip()
-            for item in configured_visible_devices.split(",")
-            if item.strip()
-        ]
+def reserve_unique_local_ports(count: int) -> list[int]:
+    """一次性占用并释放多个本地端口，降低并行启动 worker 时的端口重复风险。"""
+    if count <= 0:
+        return []
 
+    sockets: list[socket.socket] = []
+    try:
+        for _ in range(count):
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.bind(("127.0.0.1", 0))
+            sock.listen(1)
+            sockets.append(sock)
+        return [int(sock.getsockname()[1]) for sock in sockets]
+    finally:
+        for sock in sockets:
+            sock.close()
+
+
+def normalize_local_device_type(device: str | None) -> str:
+    """将 get_device() 返回值规范化为基础设备类型。"""
+    if not device:
+        return "cuda"
+    return str(device).strip().lower().split(":", 1)[0]
+
+
+def get_local_device_type() -> str:
+    """懒加载读取当前设备类型，避免 router 导入阶段提前加载 torch。"""
+    try:
+        from mineru.utils.config_reader import get_device
+
+        return normalize_local_device_type(get_device())
+    except Exception as exc:
+        logger.warning("Failed to resolve local device type, fallback to cuda: {}", exc)
+        return "cuda"
+
+
+def get_local_device_visible_env_name() -> str:
+    """根据当前设备类型选择本地 worker 的可见设备环境变量。"""
+    if get_local_device_type() == "npu":
+        return "ASCEND_RT_VISIBLE_DEVICES"
+    return "CUDA_VISIBLE_DEVICES"
+
+
+def _parse_visible_devices_env(env_name: str) -> list[str] | None:
+    """解析显式配置的可见设备列表，未配置时返回 None。"""
+    configured_visible_devices = os.getenv(env_name)
+    if configured_visible_devices is None:
+        return None
+    return [
+        item.strip()
+        for item in configured_visible_devices.split(",")
+        if item.strip()
+    ]
+
+
+def _detect_cuda_devices() -> list[str]:
+    """自动探测当前 CUDA 可见设备编号。"""
     try:
         import torch  # type: ignore
     except ImportError:
@@ -208,12 +258,35 @@ def detect_visible_cuda_devices() -> list[str]:
     return [str(index) for index in range(torch.cuda.device_count())]
 
 
+def _detect_npu_devices() -> list[str]:
+    """自动探测当前 Ascend NPU 可见设备编号。"""
+    try:
+        import torch_npu  # type: ignore
+    except ImportError:
+        return []
+    if not torch_npu.npu.is_available():
+        return []
+    return [str(index) for index in range(torch_npu.npu.device_count())]
+
+
+def detect_visible_local_devices() -> list[str]:
+    """探测当前设备类型对应的可见本地设备编号。"""
+    visible_devices_env_name = get_local_device_visible_env_name()
+    configured_visible_devices = _parse_visible_devices_env(visible_devices_env_name)
+    if configured_visible_devices is not None:
+        return configured_visible_devices
+
+    if visible_devices_env_name == "ASCEND_RT_VISIBLE_DEVICES":
+        return _detect_npu_devices()
+    return _detect_cuda_devices()
+
+
 def parse_local_gpus(local_gpus: str) -> list[str | None]:
     value = local_gpus.strip().lower()
     if value == LOCAL_GPU_NONE:
         return []
     if value == LOCAL_GPU_AUTO:
-        detected = detect_visible_cuda_devices()
+        detected = detect_visible_local_devices()
         if detected:
             return detected
         return [None]
@@ -331,7 +404,7 @@ class ManagedLocalServer:
     def is_running(self) -> bool:
         return self.process is not None and self.process.poll() is None
 
-    async def start(self, client: httpx.AsyncClient) -> None:
+    async def start(self, client: httpx.AsyncClient, port: int | None = None) -> None:
         if self.is_running():
             return
 
@@ -339,7 +412,7 @@ class ManagedLocalServer:
         output_root = Path(self.temp_dir.name) / "output"
         output_root.mkdir(parents=True, exist_ok=True)
 
-        resolved_port = find_free_port()
+        resolved_port = port if port is not None else find_free_port()
         remaining_cli_args = strip_local_api_network_args(self.extra_cli_args)
         worker_cli_args = build_local_api_cli_args(
             remaining_cli_args,
@@ -350,7 +423,7 @@ class ManagedLocalServer:
         env["MINERU_API_OUTPUT_ROOT"] = str(output_root)
         env["MINERU_API_DISABLE_ACCESS_LOG"] = "1"
         if self.gpu is not None:
-            env["CUDA_VISIBLE_DEVICES"] = str(self.gpu)
+            env[get_local_device_visible_env_name()] = str(self.gpu)
 
         command = [
             sys.executable,
@@ -520,20 +593,32 @@ class WorkerPool:
         return list(self._servers.values())
 
     async def start(self) -> None:
-        for server in self.servers:
-            if server.local_server is None:
-                continue
-            try:
-                await server.local_server.start(self.client)
-                server.base_url = normalize_base_url(server.local_server.base_url or "")
-            except Exception as exc:
-                server.healthy = False
-                server.last_error = str(exc)
-                server.last_checked_at = utc_now_iso()
+        local_servers = [
+            server for server in self.servers if server.local_server is not None
+        ]
+        local_ports = reserve_unique_local_ports(len(local_servers))
+        await asyncio.gather(
+            *(
+                self._start_local_server(server, port)
+                for server, port in zip(local_servers, local_ports)
+            )
+        )
 
         await self.refresh_all()
         if self._monitor_task is None or self._monitor_task.done():
             self._monitor_task = asyncio.create_task(self._monitor_loop(), name="mineru-router-worker-monitor")
+
+    async def _start_local_server(self, server: WorkerState, port: int) -> None:
+        """启动单个本地 worker，并把启动失败限制在该 worker 状态内。"""
+        if server.local_server is None:
+            return
+        try:
+            await server.local_server.start(self.client, port=port)
+            server.base_url = normalize_base_url(server.local_server.base_url or "")
+        except Exception as exc:
+            server.healthy = False
+            server.last_error = str(exc)
+            server.last_checked_at = utc_now_iso()
 
     async def shutdown(self) -> None:
         if self._monitor_task is not None:
@@ -1373,8 +1458,22 @@ def create_app(settings: RouterSettings | None = None) -> FastAPI:
     )
     app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-    @app.post(path="/tasks", status_code=202)
-    async def submit_parse_task(http_request: Request):
+    @app.post(
+        path="/tasks",
+        status_code=202,
+        summary="Submit an asynchronous parse task through the router",
+        description=(
+            "Submit files and parse options to a healthy upstream MinerU API "
+            "server selected by the router, then return a router task id."
+        ),
+    )
+    async def submit_parse_task(
+        http_request: Request,
+        request_options: Annotated[
+            ParseRequestOptions, Depends(parse_request_form)
+        ],
+    ):
+        del request_options
         payload = await stage_multipart_request(http_request)
         try:
             router_task = await submit_router_task(http_request, payload)
@@ -1419,8 +1518,23 @@ def create_app(settings: RouterSettings | None = None) -> FastAPI:
             )
         return await proxy_router_task_result(request, task)
 
-    @app.post(path="/file_parse", status_code=200)
-    async def file_parse(request: Request):
+    @app.post(
+        path="/file_parse",
+        status_code=200,
+        summary="Synchronously parse uploaded files through the router",
+        description=(
+            "Submit files and parse options to a healthy upstream MinerU API "
+            "server selected by the router, wait for completion, and proxy the "
+            "final result in the same response."
+        ),
+    )
+    async def file_parse(
+        request: Request,
+        request_options: Annotated[
+            ParseRequestOptions, Depends(parse_request_form)
+        ],
+    ):
+        del request_options
         payload = await stage_multipart_request(request)
         try:
             router_task = await submit_router_task(request, payload)

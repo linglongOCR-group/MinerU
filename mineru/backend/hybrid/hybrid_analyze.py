@@ -1,4 +1,5 @@
 # Copyright (c) Opendatalab. All rights reserved.
+import asyncio
 import os
 import time
 from collections import defaultdict
@@ -553,6 +554,7 @@ def doc_analyze(
         server_url: str | None = None,
         layout_server_url: str | None = None,
         recognition_server_url: str | None = None,
+        image_analysis: bool = True,
         **kwargs,
 ):
     if predictor is None:
@@ -613,12 +615,16 @@ def doc_analyze(
                     )
                     if _vlm_ocr_enable:
                         with predictor_execution_guard(predictor):
-                            window_model_list = predictor.batch_two_step_extract(images=images_pil_list)
+                            window_model_list = predictor.batch_two_step_extract(
+                                images=images_pil_list,
+                                image_analysis=image_analysis,
+                            )
                     else:
                         with predictor_execution_guard(predictor):
                             window_model_list = predictor.batch_two_step_extract(
                                 images=images_pil_list,
-                                not_extract_list=not_extract_list
+                                not_extract_list=not_extract_list,
+                                image_analysis=image_analysis,
                             )
                         window_model_list, hybrid_pipeline_model = _process_ocr_and_formulas(
                             images_pil_list,
@@ -690,6 +696,7 @@ async def aio_doc_analyze(
     server_url: str | None = None,
     layout_server_url: str | None = None,
     recognition_server_url: str | None = None,
+    image_analysis: bool = True,
     **kwargs,
 ):
     if predictor is None:
@@ -749,14 +756,19 @@ async def aio_doc_analyze(
                     )
                     if _vlm_ocr_enable:
                         async with aio_predictor_execution_guard(predictor):
-                            window_model_list = await predictor.aio_batch_two_step_extract(images=images_pil_list)
+                            window_model_list = await predictor.aio_batch_two_step_extract(
+                                images=images_pil_list,
+                                image_analysis=image_analysis,
+                            )
                     else:
                         async with aio_predictor_execution_guard(predictor):
                             window_model_list = await predictor.aio_batch_two_step_extract(
                                 images=images_pil_list,
-                                not_extract_list=not_extract_list
+                                not_extract_list=not_extract_list,
+                                image_analysis=image_analysis,
                             )
-                        window_model_list, hybrid_pipeline_model = _process_ocr_and_formulas(
+                        window_model_list, hybrid_pipeline_model = await asyncio.to_thread(
+                            _process_ocr_and_formulas,
                             images_pil_list,
                             window_model_list,
                             language,
@@ -799,7 +811,8 @@ async def aio_doc_analyze(
                 f"speed: {round(len(model_list) / infer_time, 3)} page/s"
             )
 
-        finalize_middle_json(
+        await asyncio.to_thread(
+            finalize_middle_json,
             middle_json["pdf_info"],
             hybrid_pipeline_model,
             _ocr_enable,

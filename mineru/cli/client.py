@@ -624,6 +624,7 @@ def build_request_form_data(
     recognition_server_url: Optional[str],
     start_page_id: int,
     end_page_id: Optional[int],
+    image_analysis: bool = True,
 ) -> dict[str, str | list[str]]:
     return _api_client.build_parse_request_form_data(
         lang_list=[lang],
@@ -631,6 +632,7 @@ def build_request_form_data(
         parse_method=method,
         formula_enable=formula_enable,
         table_enable=table_enable,
+        image_analysis=image_analysis,
         server_url=server_url,
         layout_server_url=layout_server_url,
         recognition_server_url=recognition_server_url,
@@ -849,6 +851,7 @@ async def run_orchestrated_cli(
     end_page_id: Optional[int],
     formula_enable: bool,
     table_enable: bool,
+    image_analysis: bool = True,
     extra_cli_args: tuple[str, ...] = (),
 ) -> None:
     if start_page_id < 0:
@@ -915,6 +918,7 @@ async def run_orchestrated_cli(
                 method=method,
                 formula_enable=formula_enable,
                 table_enable=table_enable,
+                image_analysis=image_analysis,
                 server_url=server_url,
                 layout_server_url=layout_server_url,
                 recognition_server_url=recognition_server_url,
@@ -1111,6 +1115,13 @@ async def run_orchestrated_cli(
     default=True,
     help="Enable table parsing. Default is True. ",
 )
+@click.option(
+    "--image-analysis",
+    "image_analysis",
+    type=bool,
+    default=True,
+    help="Enable image/chart analysis for VLM and hybrid backends. Default is True. ",
+)
 def main(
     ctx: click.Context,
     input_path: Path,
@@ -1126,6 +1137,7 @@ def main(
     end_page_id: Optional[int],
     formula_enable: bool,
     table_enable: bool,
+    image_analysis: bool,
 ) -> None:
     asyncio.run(
         run_orchestrated_cli(
@@ -1142,6 +1154,7 @@ def main(
             end_page_id=end_page_id,
             formula_enable=formula_enable,
             table_enable=table_enable,
+            image_analysis=image_analysis,
             extra_cli_args=tuple(ctx.args),
         )
     )

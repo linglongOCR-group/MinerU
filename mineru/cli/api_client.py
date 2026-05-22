@@ -35,7 +35,6 @@ from mineru.utils.check_sys_env import is_linux_environment
 HEALTH_ENDPOINT = "/health"
 TASKS_ENDPOINT = "/tasks"
 TASK_STATUS_POLL_INTERVAL_SECONDS = 1.0
-TASK_RESULT_TIMEOUT_SECONDS = 3600
 LOCAL_API_SHUTDOWN_TIMEOUT_SECONDS = 10
 LOCAL_API_CLEANUP_RETRIES = 8
 LOCAL_API_CLEANUP_RETRY_INTERVAL_SECONDS = 0.25
@@ -84,6 +83,29 @@ def get_local_api_startup_timeout_seconds(default: float = 300.0) -> float:
 
 
 LOCAL_API_STARTUP_TIMEOUT_SECONDS = get_local_api_startup_timeout_seconds()
+
+
+def get_task_result_timeout_seconds(default: float = 3600.0) -> float:
+    return get_float_env(
+        "MINERU_TASK_RESULT_TIMEOUT_SECONDS",
+        default,
+        minimum=1.0,
+    )
+
+
+TASK_RESULT_TIMEOUT_SECONDS = get_task_result_timeout_seconds()
+
+
+def get_task_result_download_timeout_seconds(default: float = 600.0) -> float:
+    """读取任务结果下载超时时间，避免和任务处理等待超时混用。"""
+    return get_float_env(
+        "MINERU_TASK_RESULT_DOWNLOAD_TIMEOUT_SECONDS",
+        default,
+        minimum=1.0,
+    )
+
+
+TASK_RESULT_DOWNLOAD_TIMEOUT_SECONDS = get_task_result_download_timeout_seconds()
 
 
 def get_local_api_launch_mode(default: str = LOCAL_API_LAUNCH_MODE_SUBPROCESS) -> str:
@@ -619,7 +641,7 @@ def build_http_timeout() -> httpx.Timeout:
 def build_result_download_timeout() -> httpx.Timeout:
     return httpx.Timeout(
         connect=10,
-        read=TASK_RESULT_TIMEOUT_SECONDS,
+        read=TASK_RESULT_DOWNLOAD_TIMEOUT_SECONDS,
         write=300,
         pool=30,
     )
@@ -791,6 +813,7 @@ def build_parse_request_form_data(
     layout_server_url: Optional[str] = None,
     recognition_server_url: Optional[str] = None,
     *,
+    image_analysis: bool = True,
     return_md: bool,
     return_middle_json: bool,
     return_model_output: bool,
@@ -806,6 +829,7 @@ def build_parse_request_form_data(
         "parse_method": parse_method,
         "formula_enable": str(formula_enable).lower(),
         "table_enable": str(table_enable).lower(),
+        "image_analysis": str(image_analysis).lower(),
         "return_md": str(return_md).lower(),
         "return_middle_json": str(return_middle_json).lower(),
         "return_model_output": str(return_model_output).lower(),

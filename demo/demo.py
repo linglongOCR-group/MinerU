@@ -50,6 +50,7 @@ def build_form_data(
     server_url: str | None,
     start_page_id: int,
     end_page_id: int | None,
+    image_analysis: bool = True,
 ) -> dict[str, str | list[str]]:
     return _api_client.build_parse_request_form_data(
         lang_list=[language],
@@ -57,6 +58,7 @@ def build_form_data(
         parse_method=parse_method,
         formula_enable=formula_enable,
         table_enable=table_enable,
+        image_analysis=image_analysis,
         server_url=server_url,
         layout_server_url=None,
         recognition_server_url=None,
@@ -100,6 +102,7 @@ async def run_demo(
     language: str = "ch",
     formula_enable: bool = True,
     table_enable: bool = True,
+    image_analysis: bool = True,
     server_url: str | None = None,
     start_page_id: int = 0,
     end_page_id: int | None = None,
@@ -119,6 +122,7 @@ async def run_demo(
         parse_method=parse_method,
         formula_enable=formula_enable,
         table_enable=table_enable,
+        image_analysis=image_analysis,
         server_url=server_url,
         start_page_id=start_page_id,
         end_page_id=end_page_id,
@@ -227,6 +231,8 @@ def main() -> None:
     formula_enable = True
     # Enable table parsing in the output.
     table_enable = True
+    # Enable image/chart analysis for VLM and hybrid backends.
+    image_analysis = True
     # Required only for "*-http-client" backends, for example:
     # "http://127.0.0.1:30000"
     server_url = None
@@ -247,6 +253,7 @@ def main() -> None:
             language=language,
             formula_enable=formula_enable,
             table_enable=table_enable,
+            image_analysis=image_analysis,
             server_url=server_url,
             start_page_id=start_page_id,
             end_page_id=end_page_id,

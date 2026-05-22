@@ -44,7 +44,7 @@ Usage: mineru-gradio [OPTIONS]
 
 Options:
   --enable-example BOOLEAN        启用示例文件输入(需要将示例文件放置在当前
-                                  执行命令目录下的 `example` 文件夹中)
+                                  执行命令目录下的 `examples` 文件夹中)
   --enable-http-client BOOLEAN    在后端选项中启用 HTTP 客户端选项
   --enable-api BOOLEAN            启用 Gradio API 以提供应用程序服务
   --max-convert-pages INTEGER     设置从 PDF 转换为 Markdown 的最大页数
@@ -140,6 +140,16 @@ MinerU命令行工具的某些参数存在相同功能的环境变量配置，�
     * 用于控制各命令行工具等待本地拉起的 `mineru-api` 进入健康状态的最长时间
     * 默认为 `300` 秒。
     * 适用于 `mineru` 的临时本地 API、`mineru-gradio` 的 preload 启动，以及 `mineru-router` 托管的本地 worker。
+
+- `MINERU_TASK_RESULT_TIMEOUT_SECONDS`：
+    * 用于控制客户端等待任务完成并进入终态的最长时间。
+    * 默认为 `3600` 秒，需设置为大于等于 `1` 的数值。
+    * 适用于 `mineru`、`mineru-gradio` 和 `mineru-router` 等通过 API 客户端轮询任务状态的场景。
+
+- `MINERU_TASK_RESULT_DOWNLOAD_TIMEOUT_SECONDS`：
+    * 用于控制任务完成后获取结果的读取超时时间，包括服务端生成 ZIP 的等待和结果 ZIP 下载。
+    * 默认为 `600` 秒，需设置为大于等于 `1` 的数值。
+    * 该配置不代表整个下载过程的总耗时硬上限；如果服务端持续返回数据，整体下载时间可能超过该值。
 
 - `MINERU_API_TASK_RETENTION_SECONDS`：
     * 用于设置任务完成或失败后的保留时长（秒）

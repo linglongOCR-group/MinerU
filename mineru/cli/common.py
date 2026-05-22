@@ -1,4 +1,5 @@
 # Copyright (c) Opendatalab. All rights reserved.
+import asyncio
 import importlib
 import importlib.util
 import json
@@ -670,6 +671,7 @@ def do_parse(
         f_make_md_mode=MakeMode.MM_MD,
         start_page_id=0,
         end_page_id=None,
+        image_analysis=True,
         **kwargs,
 ):
     need_remove_index = _process_office_doc(
@@ -718,7 +720,8 @@ def do_parse(
                 output_dir, pdf_file_names, pdf_bytes_list, backend,
                 f_draw_layout_bbox, f_draw_span_bbox, f_dump_md, f_dump_middle_json,
                 f_dump_model_output, f_dump_orig_pdf, f_dump_content_list, f_make_md_mode,
-                server_url, layout_server_url, recognition_server_url, **kwargs,
+                server_url, layout_server_url, recognition_server_url,
+                image_analysis=image_analysis, **kwargs,
             )
         elif backend.startswith("hybrid-"):
             ensure_backend_dependencies(backend)
@@ -738,7 +741,8 @@ def do_parse(
                 output_dir, pdf_file_names, pdf_bytes_list, p_lang_list, parse_method, formula_enable, backend,
                 f_draw_layout_bbox, f_draw_span_bbox, f_dump_md, f_dump_middle_json,
                 f_dump_model_output, f_dump_orig_pdf, f_dump_content_list, f_make_md_mode,
-                server_url, layout_server_url, recognition_server_url, **kwargs,
+                server_url, layout_server_url, recognition_server_url,
+                image_analysis=image_analysis, **kwargs,
             )
 
 
@@ -764,9 +768,12 @@ async def aio_do_parse(
         f_make_md_mode=MakeMode.MM_MD,
         start_page_id=0,
         end_page_id=None,
+        image_analysis=True,
         **kwargs,
 ):
-    need_remove_index = _process_office_doc(
+    # Office 解析是同步且可能耗时的操作，异步入口需要放到线程中避免阻塞事件循环。
+    need_remove_index = await asyncio.to_thread(
+        _process_office_doc,
         output_dir,
         pdf_file_names=pdf_file_names,
         pdf_bytes_list=pdf_bytes_list,
@@ -813,7 +820,8 @@ async def aio_do_parse(
                 output_dir, pdf_file_names, pdf_bytes_list, backend,
                 f_draw_layout_bbox, f_draw_span_bbox, f_dump_md, f_dump_middle_json,
                 f_dump_model_output, f_dump_orig_pdf, f_dump_content_list, f_make_md_mode,
-                server_url, layout_server_url, recognition_server_url, **kwargs,
+                server_url, layout_server_url, recognition_server_url,
+                image_analysis=image_analysis, **kwargs,
             )
         elif backend.startswith("hybrid-"):
             ensure_backend_dependencies(backend)
@@ -832,7 +840,8 @@ async def aio_do_parse(
                 output_dir, pdf_file_names, pdf_bytes_list, p_lang_list, parse_method, formula_enable, backend,
                 f_draw_layout_bbox, f_draw_span_bbox, f_dump_md, f_dump_middle_json,
                 f_dump_model_output, f_dump_orig_pdf, f_dump_content_list, f_make_md_mode,
-                server_url, layout_server_url, recognition_server_url, **kwargs,
+                server_url, layout_server_url, recognition_server_url,
+                image_analysis=image_analysis, **kwargs,
             )
 
 
