@@ -56,3 +56,18 @@ def resolve_parse_dir(
         if office_dir.exists():
             return office_dir
     return parse_dir
+
+
+def is_document_completed(
+    output_dir: str | Path,
+    document_stem: str,
+    backend: str,
+    parse_method: str,
+    *,
+    is_office: bool = False,
+) -> bool:
+    parse_dir = build_parse_dir(
+        output_dir, document_stem, backend, parse_method, is_office=is_office,
+    )
+    md_path = parse_dir / f"{document_stem}.md"
+    return md_path.exists() and md_path.stat().st_size > 0

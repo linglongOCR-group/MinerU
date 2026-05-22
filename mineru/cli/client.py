@@ -38,7 +38,7 @@ from mineru.cli.common import (
     uniquify_task_stems,
 )
 from mineru.cli import api_client as _api_client
-from mineru.cli.output_paths import resolve_parse_dir
+from mineru.cli.output_paths import is_document_completed, resolve_parse_dir
 from mineru.cli.visualization import (
     VisualizationJob,
     run_visualization_job,
@@ -849,6 +849,7 @@ async def run_orchestrated_cli(
     api_url: Optional[str],
     start_page_id: int,
     end_page_id: Optional[int],
+    resume: bool,
     formula_enable: bool,
     table_enable: bool,
     image_analysis: bool = True,
@@ -870,6 +871,22 @@ async def run_orchestrated_cli(
         start_page_id=start_page_id,
         end_page_id=end_page_id,
     )
+
+    if resume:
+        before = len(documents)
+        documents = [
+            doc for doc in documents
+            if not is_document_completed(
+                output_dir, doc.stem, backend, method,
+                is_office=doc.suffix in office_suffixes,
+            )
+        ]
+        skipped = before - len(documents)
+        if skipped:
+            logger.info(f"Resuming: skipping {skipped} already-completed document(s)")
+        if not documents:
+            logger.info("All documents already completed — nothing to do")
+            return
 
     timeout = build_http_timeout()
     local_server: LocalAPIServer | None = None
@@ -1100,6 +1117,14 @@ async def run_orchestrated_cli(
     help="The ending page for PDF parsing, beginning from 0.",
 )
 @click.option(
+    "-r",
+    "--resume",
+    "resume",
+    is_flag=True,
+    default=False,
+    help="Skip documents that already have output in the output directory.",
+)
+@click.option(
     "-f",
     "--formula",
     "formula_enable",
@@ -1135,6 +1160,7 @@ def main(
     recognition_server_url: Optional[str],
     start_page_id: int,
     end_page_id: Optional[int],
+    resume: bool,
     formula_enable: bool,
     table_enable: bool,
     image_analysis: bool,
@@ -1152,6 +1178,7 @@ def main(
             api_url=api_url,
             start_page_id=start_page_id,
             end_page_id=end_page_id,
+            resume=resume,
             formula_enable=formula_enable,
             table_enable=table_enable,
             image_analysis=image_analysis,
