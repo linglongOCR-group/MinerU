@@ -25,6 +25,7 @@ class ParseRequestOptions:
     formula_enable: bool
     table_enable: bool
     image_analysis: bool
+    dissection_enable: bool
     server_url: Optional[str]
     layout_server_url: Optional[str]
     recognition_server_url: Optional[str]
@@ -118,6 +119,10 @@ async def parse_request_form(
         bool,
         Form(description="Enable image/chart analysis for VLM and hybrid backends."),
     ] = True,
+    dissection_enable: Annotated[
+        bool,
+        Form(description="Write VLM HTTP dissection artifacts for debugging."),
+    ] = False,
     server_url: Annotated[
         Optional[str],
         Form(
@@ -200,6 +205,7 @@ async def parse_request_form(
         formula_enable=formula_enable,
         table_enable=table_enable,
         image_analysis=image_analysis,
+        dissection_enable=dissection_enable,
         server_url=server_url,
         layout_server_url=layout_server_url,
         recognition_server_url=recognition_server_url,

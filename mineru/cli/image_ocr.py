@@ -52,6 +52,7 @@ class ImageOcrOptions:
     max_retries: int = 3
     retry_backoff_factor: float = 0.5
     progress: bool = True
+    dissection_enable: bool = False
 
 
 @dataclass(frozen=True)
@@ -284,7 +285,12 @@ async def process_image_job(
     request_semaphore: asyncio.Semaphore,
 ) -> ImageJobResult:
     start = time.monotonic()
+    recorder = None
     try:
+        if options.dissection_enable:
+            from mineru_vl_utils.dissection import DissectionRecorder
+
+            recorder = DissectionRecorder(job.parse_dir / "dissection", document_stem=job.stem)
         with Image.open(job.path) as src_image:
             src_image.load()
             image = src_image.convert("RGB")
@@ -293,6 +299,8 @@ async def process_image_job(
                 image,
                 semaphore=request_semaphore,
                 image_analysis=options.image_analysis,
+                dissection_recorder=recorder,
+                page_idx=0,
             ),
             timeout=options.per_image_timeout,
         )
@@ -319,6 +327,9 @@ async def process_image_job(
         error = str(exc)
         write_failed_status(job, error, elapsed)
         return ImageJobResult(job=job, status="failed", elapsed_seconds=round(elapsed, 3), error=error)
+    finally:
+        if recorder is not None:
+            recorder.finalize()
 
 
 @contextmanager
@@ -380,6 +391,7 @@ async def run_image_ocr(
 @click.option("--max-retries", default=3, show_default=True, type=int, help="HTTP retry count passed to MinerUClient.")
 @click.option("--retry-backoff-factor", default=0.5, show_default=True, type=float, help="HTTP retry backoff factor passed to MinerUClient.")
 @click.option("--progress/--no-progress", default=True, show_default=True, help="Show a progress bar.")
+@click.option("--dissection/--no-dissection", "dissection_enable", default=False, show_default=True, help="Write VLM dissection artifacts.")
 def main(
     input_path: Path,
     output_dir: Path,
@@ -397,6 +409,7 @@ def main(
     max_retries: int,
     retry_backoff_factor: float,
     progress: bool,
+    dissection_enable: bool,
 ) -> None:
     options = ImageOcrOptions(
         input_path=input_path,
@@ -415,6 +428,7 @@ def main(
         max_retries=max_retries,
         retry_backoff_factor=retry_backoff_factor,
         progress=progress,
+        dissection_enable=dissection_enable,
     )
     results = asyncio.run(run_image_ocr(options))
     completed = sum(result.status == "completed" for result in results)

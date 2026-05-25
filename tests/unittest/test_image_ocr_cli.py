@@ -135,6 +135,7 @@ def test_cli_parses_http_scheduler_options(monkeypatch, tmp_path):
             "--no-formula",
             "--no-table",
             "--no-image-analysis",
+            "--dissection",
         ],
     )
 
@@ -155,3 +156,4 @@ def test_cli_parses_http_scheduler_options(monkeypatch, tmp_path):
     assert captured["formula_enable"] is False
     assert captured["table_enable"] is False
     assert captured["image_analysis"] is False
+    assert captured["dissection_enable"] is True

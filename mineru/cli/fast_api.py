@@ -150,6 +150,7 @@ class AsyncParseTask:
     formula_enable: bool
     table_enable: bool
     image_analysis: bool
+    dissection_enable: bool
     server_url: Optional[str]
     layout_server_url: Optional[str]
     recognition_server_url: Optional[str]
@@ -499,6 +500,7 @@ def create_result_zip(
     return_content_list: bool,
     return_images: bool,
     return_original_file: bool,
+    dissection_enable: bool = False,
 ) -> str:
     zip_fd, zip_path = tempfile.mkstemp(suffix=".zip", prefix="mineru_results_")
     os.close(zip_fd)
@@ -601,6 +603,21 @@ def create_result_zip(
                             path.name,
                         ),
                     )
+
+            if dissection_enable:
+                dissection_dir = Path(parse_dir) / "dissection"
+                if dissection_dir.exists():
+                    for path in sorted(dissection_dir.rglob("*")):
+                        if not path.is_file():
+                            continue
+                        zf.write(
+                            str(path),
+                            arcname=build_zip_arcname(
+                                pdf_name,
+                                parse_dir,
+                                str(path.relative_to(parse_dir)),
+                            ),
+                        )
     return zip_path
 
 
@@ -628,6 +645,7 @@ async def build_result_response(
     return_images: bool,
     response_format_zip: bool,
     return_original_file: bool,
+    dissection_enable: bool = False,
     zip_filename: str = "results.zip",
 ) -> Response:
     if response_format_zip:
@@ -644,6 +662,7 @@ async def build_result_response(
                 return_content_list=return_content_list,
                 return_images=return_images,
                 return_original_file=return_original_file,
+                dissection_enable=dissection_enable,
             )
         )
         try:
@@ -712,6 +731,7 @@ async def build_sync_file_parse_response(
             return_images=task.return_images,
             response_format_zip=task.response_format_zip,
             return_original_file=task.return_original_file,
+            dissection_enable=task.dissection_enable,
             zip_filename=f"{task.task_id}.zip",
         )
         response.headers[FILE_PARSE_TASK_ID_HEADER] = task.task_id
@@ -838,6 +858,7 @@ async def run_parse_job(
         formula_enable=request_options.formula_enable,
         table_enable=request_options.table_enable,
         image_analysis=request_options.image_analysis,
+        dissection_enable=request_options.dissection_enable,
         server_url=request_options.server_url,
         layout_server_url=request_options.layout_server_url,
         recognition_server_url=request_options.recognition_server_url,
@@ -893,6 +914,7 @@ async def create_async_parse_task(
             formula_enable=request_options.formula_enable,
             table_enable=request_options.table_enable,
             image_analysis=request_options.image_analysis,
+            dissection_enable=request_options.dissection_enable,
             server_url=request_options.server_url,
             layout_server_url=request_options.layout_server_url,
             recognition_server_url=request_options.recognition_server_url,
@@ -1340,6 +1362,7 @@ async def get_async_task_result(
         return_images=task.return_images,
         response_format_zip=task.response_format_zip,
         return_original_file=task.return_original_file,
+        dissection_enable=task.dissection_enable,
         zip_filename=f"{task.task_id}.zip",
     )
 

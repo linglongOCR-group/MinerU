@@ -37,6 +37,7 @@ from ...utils.pdfium_guard import (
 from ...utils.models_download_utils import auto_download_and_get_model_root_path
 
 from mineru_vl_utils import MinerUClient
+from mineru_vl_utils.dissection import DissectionRecorder
 from packaging import version
 
 
@@ -444,6 +445,8 @@ def doc_analyze(
     layout_server_url: str | None = None,
     recognition_server_url: str | None = None,
     image_analysis: bool = True,
+    dissection_dir: str | None = None,
+    document_stem: str | None = None,
     **kwargs,
 ):
     if predictor is None:
@@ -459,6 +462,11 @@ def doc_analyze(
 
     pdf_doc = open_pdfium_document(pdfium.PdfDocument, pdf_bytes)
     middle_json = init_middle_json()
+    dissection_recorder = (
+        DissectionRecorder(dissection_dir, document_stem=document_stem)
+        if dissection_dir
+        else None
+    )
     results = []
     doc_closed = False
     try:
@@ -499,6 +507,8 @@ def doc_analyze(
                         window_results = predictor.batch_two_step_extract(
                             images=images_pil_list,
                             image_analysis=image_analysis,
+                            dissection_recorder=dissection_recorder,
+                            page_start_index=window_start,
                         )
                     results.extend(window_results)
                     if progress_bar is None:
@@ -535,6 +545,8 @@ def doc_analyze(
         doc_closed = True
         return middle_json, results
     finally:
+        if dissection_recorder is not None:
+            dissection_recorder.finalize()
         if not doc_closed:
             close_pdfium_document(pdf_doc)
 
@@ -549,6 +561,8 @@ async def aio_doc_analyze(
     layout_server_url: str | None = None,
     recognition_server_url: str | None = None,
     image_analysis: bool = True,
+    dissection_dir: str | None = None,
+    document_stem: str | None = None,
     **kwargs,
 ):
     if predictor is None:
@@ -564,6 +578,11 @@ async def aio_doc_analyze(
 
     pdf_doc = open_pdfium_document(pdfium.PdfDocument, pdf_bytes)
     middle_json = init_middle_json()
+    dissection_recorder = (
+        DissectionRecorder(dissection_dir, document_stem=document_stem)
+        if dissection_dir
+        else None
+    )
     results = []
     doc_closed = False
     try:
@@ -603,6 +622,8 @@ async def aio_doc_analyze(
                         window_results = await predictor.aio_batch_two_step_extract(
                             images=images_pil_list,
                             image_analysis=image_analysis,
+                            dissection_recorder=dissection_recorder,
+                            page_start_index=window_start,
                         )
                     results.extend(window_results)
                     if progress_bar is None:
@@ -639,5 +660,7 @@ async def aio_doc_analyze(
         doc_closed = True
         return middle_json, results
     finally:
+        if dissection_recorder is not None:
+            dissection_recorder.finalize()
         if not doc_closed:
             close_pdfium_document(pdf_doc)
