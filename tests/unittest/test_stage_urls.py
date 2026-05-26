@@ -29,12 +29,14 @@ def test_parse_request_form_data_includes_stage_urls_only_when_provided():
         response_format_zip=False,
         return_original_file=False,
         dissection_enable=True,
+        stream=True,
     )
 
     assert form_data["server_url"] == "http://shared"
     assert form_data["layout_server_url"] == "http://layout"
     assert form_data["recognition_server_url"] == "http://recognition"
     assert form_data["dissection_enable"] == "true"
+    assert form_data["stream"] == "true"
 
     form_data = api_client.build_parse_request_form_data(
         lang_list=["ch"],
@@ -55,12 +57,14 @@ def test_parse_request_form_data_includes_stage_urls_only_when_provided():
         response_format_zip=False,
         return_original_file=False,
         dissection_enable=False,
+        stream=False,
     )
 
     assert "server_url" not in form_data
     assert "layout_server_url" not in form_data
     assert "recognition_server_url" not in form_data
     assert form_data["dissection_enable"] == "false"
+    assert form_data["stream"] == "false"
 
 
 def test_fastapi_form_exposes_stage_url_fields():
@@ -69,10 +73,13 @@ def test_fastapi_form_exposes_stage_url_fields():
     assert "layout_server_url" in signature.parameters
     assert "recognition_server_url" in signature.parameters
     assert "dissection_enable" in signature.parameters
+    assert "stream" in signature.parameters
     assert "layout_server_url" in fast_api.ParseRequestOptions.__dataclass_fields__
     assert "recognition_server_url" in fast_api.AsyncParseTask.__dataclass_fields__
     assert "dissection_enable" in fast_api.ParseRequestOptions.__dataclass_fields__
     assert "dissection_enable" in fast_api.AsyncParseTask.__dataclass_fields__
+    assert "stream" in fast_api.ParseRequestOptions.__dataclass_fields__
+    assert "stream" in fast_api.AsyncParseTask.__dataclass_fields__
 
 
 def test_result_zip_includes_dissection_directory_when_enabled(tmp_path):

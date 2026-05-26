@@ -136,6 +136,7 @@ def test_cli_parses_http_scheduler_options(monkeypatch, tmp_path):
             "--no-table",
             "--no-image-analysis",
             "--dissection",
+            "--stream",
         ],
     )
 
@@ -157,3 +158,23 @@ def test_cli_parses_http_scheduler_options(monkeypatch, tmp_path):
     assert captured["table_enable"] is False
     assert captured["image_analysis"] is False
     assert captured["dissection_enable"] is True
+    assert captured["stream"] is True
+
+
+def test_cli_rejects_stream_without_dissection(tmp_path):
+    image_path = tmp_path / "page.png"
+    _make_image(image_path)
+
+    result = CliRunner().invoke(
+        image_ocr.main,
+        [
+            "-p",
+            str(image_path),
+            "-o",
+            str(tmp_path / "out"),
+            "--stream",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "--stream requires --dissection" in result.output

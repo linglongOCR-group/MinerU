@@ -26,6 +26,7 @@ class ParseRequestOptions:
     table_enable: bool
     image_analysis: bool
     dissection_enable: bool
+    stream: bool
     server_url: Optional[str]
     layout_server_url: Optional[str]
     recognition_server_url: Optional[str]
@@ -123,6 +124,10 @@ async def parse_request_form(
         bool,
         Form(description="Write VLM HTTP dissection artifacts for debugging."),
     ] = False,
+    stream: Annotated[
+        bool,
+        Form(description="Use streaming recognition to capture partial dissection output."),
+    ] = False,
     server_url: Annotated[
         Optional[str],
         Form(
@@ -196,6 +201,10 @@ async def parse_request_form(
         layout_server_url=layout_server_url,
         recognition_server_url=recognition_server_url,
     )
+    if stream and not dissection_enable:
+        raise HTTPException(status_code=400, detail="stream requires dissection_enable")
+    if stream and backend != "vlm-http-client":
+        raise HTTPException(status_code=400, detail="stream requires the vlm-http-client backend")
     effective_return_original_file = return_original_file and response_format_zip
     return ParseRequestOptions(
         files=files,
@@ -206,6 +215,7 @@ async def parse_request_form(
         table_enable=table_enable,
         image_analysis=image_analysis,
         dissection_enable=dissection_enable,
+        stream=stream,
         server_url=server_url,
         layout_server_url=layout_server_url,
         recognition_server_url=recognition_server_url,

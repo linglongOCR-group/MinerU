@@ -390,6 +390,7 @@ async def _async_process_vlm(
         layout_server_url=None,
         recognition_server_url=None,
         dissection_enable=False,
+        stream=False,
         **kwargs,
 ):
     """异步处理VLM后端逻辑"""
@@ -414,6 +415,7 @@ async def _async_process_vlm(
             recognition_server_url=recognition_server_url,
             dissection_dir=os.path.join(local_md_dir, "dissection") if dissection_enable else None,
             document_stem=pdf_file_name,
+            dissection_stream=stream,
             **kwargs,
         )
 
@@ -444,6 +446,7 @@ def _process_vlm(
         layout_server_url=None,
         recognition_server_url=None,
         dissection_enable=False,
+        stream=False,
         **kwargs,
 ):
     """同步处理VLM后端逻辑"""
@@ -468,6 +471,7 @@ def _process_vlm(
             recognition_server_url=recognition_server_url,
             dissection_dir=os.path.join(local_md_dir, "dissection") if dissection_enable else None,
             document_stem=pdf_file_name,
+            dissection_stream=stream,
             **kwargs,
         )
 
@@ -679,8 +683,13 @@ def do_parse(
         end_page_id=None,
         image_analysis=True,
         dissection_enable=False,
+        stream=False,
         **kwargs,
 ):
+    if stream and not dissection_enable:
+        raise ValueError("stream requires dissection_enable")
+    if stream and backend != "vlm-http-client":
+        raise ValueError("stream requires the vlm-http-client backend")
     need_remove_index = _process_office_doc(
         output_dir,
         pdf_file_names=pdf_file_names,
@@ -728,7 +737,7 @@ def do_parse(
                 f_draw_layout_bbox, f_draw_span_bbox, f_dump_md, f_dump_middle_json,
                 f_dump_model_output, f_dump_orig_pdf, f_dump_content_list, f_make_md_mode,
                 server_url, layout_server_url, recognition_server_url,
-                image_analysis=image_analysis, dissection_enable=dissection_enable, **kwargs,
+                image_analysis=image_analysis, dissection_enable=dissection_enable, stream=stream, **kwargs,
             )
         elif backend.startswith("hybrid-"):
             ensure_backend_dependencies(backend)
@@ -777,8 +786,13 @@ async def aio_do_parse(
         end_page_id=None,
         image_analysis=True,
         dissection_enable=False,
+        stream=False,
         **kwargs,
 ):
+    if stream and not dissection_enable:
+        raise ValueError("stream requires dissection_enable")
+    if stream and backend != "vlm-http-client":
+        raise ValueError("stream requires the vlm-http-client backend")
     # Office 解析是同步且可能耗时的操作，异步入口需要放到线程中避免阻塞事件循环。
     need_remove_index = await asyncio.to_thread(
         _process_office_doc,
@@ -829,7 +843,7 @@ async def aio_do_parse(
                 f_draw_layout_bbox, f_draw_span_bbox, f_dump_md, f_dump_middle_json,
                 f_dump_model_output, f_dump_orig_pdf, f_dump_content_list, f_make_md_mode,
                 server_url, layout_server_url, recognition_server_url,
-                image_analysis=image_analysis, dissection_enable=dissection_enable, **kwargs,
+                image_analysis=image_analysis, dissection_enable=dissection_enable, stream=stream, **kwargs,
             )
         elif backend.startswith("hybrid-"):
             ensure_backend_dependencies(backend)

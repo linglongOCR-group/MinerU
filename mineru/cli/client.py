@@ -626,6 +626,7 @@ def build_request_form_data(
     end_page_id: Optional[int],
     image_analysis: bool = True,
     dissection_enable: bool = False,
+    stream: bool = False,
 ) -> dict[str, str | list[str]]:
     return _api_client.build_parse_request_form_data(
         lang_list=[lang],
@@ -635,6 +636,7 @@ def build_request_form_data(
         table_enable=table_enable,
         image_analysis=image_analysis,
         dissection_enable=dissection_enable,
+        stream=stream,
         server_url=server_url,
         layout_server_url=layout_server_url,
         recognition_server_url=recognition_server_url,
@@ -857,7 +859,12 @@ async def run_orchestrated_cli(
     image_analysis: bool = True,
     extra_cli_args: tuple[str, ...] = (),
     dissection_enable: bool = False,
+    stream: bool = False,
 ) -> None:
+    if stream and not dissection_enable:
+        raise click.ClickException("--stream requires --dissection")
+    if stream and backend != "vlm-http-client":
+        raise click.ClickException("--stream requires the vlm-http-client backend")
     if start_page_id < 0:
         raise click.ClickException("--start must be greater than or equal to 0")
     if end_page_id is not None and end_page_id < 0:
@@ -940,6 +947,7 @@ async def run_orchestrated_cli(
                 table_enable=table_enable,
                 image_analysis=image_analysis,
                 dissection_enable=dissection_enable,
+                stream=stream,
                 server_url=server_url,
                 layout_server_url=layout_server_url,
                 recognition_server_url=recognition_server_url,
@@ -1158,6 +1166,13 @@ async def run_orchestrated_cli(
     default=False,
     help="Write VLM HTTP dissection artifacts for debugging.",
 )
+@click.option(
+    "--stream",
+    "stream",
+    is_flag=True,
+    default=False,
+    help="Use streaming recognition to capture partial dissection output.",
+)
 def main(
     ctx: click.Context,
     input_path: Path,
@@ -1176,6 +1191,7 @@ def main(
     table_enable: bool,
     image_analysis: bool,
     dissection_enable: bool,
+    stream: bool,
 ) -> None:
     asyncio.run(
         run_orchestrated_cli(
@@ -1195,6 +1211,7 @@ def main(
             table_enable=table_enable,
             image_analysis=image_analysis,
             dissection_enable=dissection_enable,
+            stream=stream,
             extra_cli_args=tuple(ctx.args),
         )
     )

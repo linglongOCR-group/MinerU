@@ -151,6 +151,7 @@ class AsyncParseTask:
     table_enable: bool
     image_analysis: bool
     dissection_enable: bool
+    stream: bool
     server_url: Optional[str]
     layout_server_url: Optional[str]
     recognition_server_url: Optional[str]
@@ -859,6 +860,7 @@ async def run_parse_job(
         table_enable=request_options.table_enable,
         image_analysis=request_options.image_analysis,
         dissection_enable=request_options.dissection_enable,
+        stream=request_options.stream,
         server_url=request_options.server_url,
         layout_server_url=request_options.layout_server_url,
         recognition_server_url=request_options.recognition_server_url,
@@ -915,6 +917,7 @@ async def create_async_parse_task(
             table_enable=request_options.table_enable,
             image_analysis=request_options.image_analysis,
             dissection_enable=request_options.dissection_enable,
+            stream=request_options.stream,
             server_url=request_options.server_url,
             layout_server_url=request_options.layout_server_url,
             recognition_server_url=request_options.recognition_server_url,

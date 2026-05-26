@@ -447,6 +447,7 @@ def doc_analyze(
     image_analysis: bool = True,
     dissection_dir: str | None = None,
     document_stem: str | None = None,
+    dissection_stream: bool = False,
     **kwargs,
 ):
     if predictor is None:
@@ -508,6 +509,7 @@ def doc_analyze(
                             images=images_pil_list,
                             image_analysis=image_analysis,
                             dissection_recorder=dissection_recorder,
+                            dissection_stream=dissection_stream,
                             page_start_index=window_start,
                         )
                     results.extend(window_results)
@@ -563,6 +565,7 @@ async def aio_doc_analyze(
     image_analysis: bool = True,
     dissection_dir: str | None = None,
     document_stem: str | None = None,
+    dissection_stream: bool = False,
     **kwargs,
 ):
     if predictor is None:
@@ -623,6 +626,7 @@ async def aio_doc_analyze(
                             images=images_pil_list,
                             image_analysis=image_analysis,
                             dissection_recorder=dissection_recorder,
+                            dissection_stream=dissection_stream,
                             page_start_index=window_start,
                         )
                     results.extend(window_results)

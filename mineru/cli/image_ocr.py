@@ -53,6 +53,7 @@ class ImageOcrOptions:
     retry_backoff_factor: float = 0.5
     progress: bool = True
     dissection_enable: bool = False
+    stream: bool = False
 
 
 @dataclass(frozen=True)
@@ -300,6 +301,7 @@ async def process_image_job(
                 semaphore=request_semaphore,
                 image_analysis=options.image_analysis,
                 dissection_recorder=recorder,
+                dissection_stream=options.stream,
                 page_idx=0,
             ),
             timeout=options.per_image_timeout,
@@ -350,6 +352,8 @@ async def run_image_ocr(
     options: ImageOcrOptions,
     client_factory: Callable[[ImageOcrOptions], Any] = create_mineru_client,
 ) -> list[ImageJobResult]:
+    if options.stream and not options.dissection_enable:
+        raise click.ClickException("--stream requires --dissection")
     jobs = collect_image_jobs(options.input_path, options.output_dir, resume=options.resume)
     if not jobs:
         return []
@@ -392,6 +396,7 @@ async def run_image_ocr(
 @click.option("--retry-backoff-factor", default=0.5, show_default=True, type=float, help="HTTP retry backoff factor passed to MinerUClient.")
 @click.option("--progress/--no-progress", default=True, show_default=True, help="Show a progress bar.")
 @click.option("--dissection/--no-dissection", "dissection_enable", default=False, show_default=True, help="Write VLM dissection artifacts.")
+@click.option("--stream/--no-stream", "stream", default=False, show_default=True, help="Use streaming recognition to capture partial dissection output.")
 def main(
     input_path: Path,
     output_dir: Path,
@@ -410,7 +415,10 @@ def main(
     retry_backoff_factor: float,
     progress: bool,
     dissection_enable: bool,
+    stream: bool,
 ) -> None:
+    if stream and not dissection_enable:
+        raise click.ClickException("--stream requires --dissection")
     options = ImageOcrOptions(
         input_path=input_path,
         output_dir=output_dir,
@@ -429,6 +437,7 @@ def main(
         retry_backoff_factor=retry_backoff_factor,
         progress=progress,
         dissection_enable=dissection_enable,
+        stream=stream,
     )
     results = asyncio.run(run_image_ocr(options))
     completed = sum(result.status == "completed" for result in results)
