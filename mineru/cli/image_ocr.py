@@ -46,6 +46,7 @@ class ImageOcrOptions:
     table_enable: bool = True
     image_analysis: bool = True
     max_concurrency: int = 16
+    max_http_concurrency_per_image: int = 1
     per_image_timeout: float = 600.0
     http_timeout: int = 600
     connect_timeout: int = 10
@@ -273,7 +274,7 @@ def create_mineru_client(options: ImageOcrOptions):
         connect_timeout=options.connect_timeout,
         max_retries=options.max_retries,
         retry_backoff_factor=options.retry_backoff_factor,
-        max_concurrency=options.max_concurrency,
+        max_concurrency=options.max_http_concurrency_per_image,
         image_analysis=options.image_analysis,
         enable_table_formula_eq_wrap=True,
     )
@@ -283,7 +284,6 @@ async def process_image_job(
     client: Any,
     job: ImageJob,
     options: ImageOcrOptions,
-    request_semaphore: asyncio.Semaphore,
 ) -> ImageJobResult:
     start = time.monotonic()
     recorder = None
@@ -298,7 +298,6 @@ async def process_image_job(
         blocks_result = await asyncio.wait_for(
             client.aio_two_step_extract(
                 image,
-                semaphore=request_semaphore,
                 image_analysis=options.image_analysis,
                 dissection_recorder=recorder,
                 dissection_stream=options.stream,
@@ -307,26 +306,42 @@ async def process_image_job(
             timeout=options.per_image_timeout,
         )
         blocks = [dict(block) for block in blocks_result]
-        middle_json = build_middle_json_from_blocks(blocks, image.size)
-        markdown, content_list = render_outputs(middle_json)
-        elapsed = time.monotonic() - start
-        write_success_outputs(
-            job,
-            blocks=blocks,
-            middle_json=middle_json,
-            markdown=markdown,
-            content_list=content_list,
-            elapsed_seconds=elapsed,
-        )
+        if recorder is not None:
+            recorder.record_stage_started("output_generation")
+        try:
+            middle_json = build_middle_json_from_blocks(blocks, image.size)
+            markdown, content_list = render_outputs(middle_json)
+            elapsed = time.monotonic() - start
+            write_success_outputs(
+                job,
+                blocks=blocks,
+                middle_json=middle_json,
+                markdown=markdown,
+                content_list=content_list,
+                elapsed_seconds=elapsed,
+            )
+        except Exception as exc:
+            if recorder is not None:
+                recorder.record_stage_finished("output_generation", "failed", exc)
+                recorder.record_pipeline_finished("failed", exc)
+            raise
+        if recorder is not None:
+            recorder.record_stage_finished("output_generation", "completed")
+            recorder.record_pipeline_finished("completed")
         return ImageJobResult(job=job, status="completed", elapsed_seconds=round(elapsed, 3))
     except asyncio.TimeoutError:
         elapsed = time.monotonic() - start
         error = f"timed out after {options.per_image_timeout} seconds"
+        if recorder is not None:
+            timeout_error = TimeoutError(error)
+            recorder.record_pipeline_finished("timeout", timeout_error)
         write_failed_status(job, error, elapsed)
         return ImageJobResult(job=job, status="timeout", elapsed_seconds=round(elapsed, 3), error=error)
     except Exception as exc:
         elapsed = time.monotonic() - start
         error = str(exc)
+        if recorder is not None:
+            recorder.record_pipeline_finished("failed", exc)
         write_failed_status(job, error, elapsed)
         return ImageJobResult(job=job, status="failed", elapsed_seconds=round(elapsed, 3), error=error)
     finally:
@@ -354,15 +369,16 @@ async def run_image_ocr(
 ) -> list[ImageJobResult]:
     if options.stream and not options.dissection_enable:
         raise click.ClickException("--stream requires --dissection")
+    if options.max_http_concurrency_per_image < 1:
+        raise click.ClickException("--max-http-concurrency-per-image must be at least 1")
     jobs = collect_image_jobs(options.input_path, options.output_dir, resume=options.resume)
     if not jobs:
         return []
 
     client = client_factory(options)
-    request_semaphore = asyncio.Semaphore(options.max_concurrency)
 
     async def worker(job: ImageJob) -> ImageJobResult:
-        return await process_image_job(client, job, options, request_semaphore)
+        return await process_image_job(client, job, options)
 
     with _temporary_env(
         {
@@ -388,7 +404,8 @@ async def run_image_ocr(
 @click.option("--formula/--no-formula", "formula_enable", default=True, show_default=True, help="Render formula content.")
 @click.option("--table/--no-table", "table_enable", default=True, show_default=True, help="Render table HTML content.")
 @click.option("--image-analysis/--no-image-analysis", default=True, show_default=True, help="Recognize standalone image/chart blocks.")
-@click.option("--max-concurrency", default=16, show_default=True, type=int, help="Maximum in-flight image jobs and server requests.")
+@click.option("--max-concurrency", default=16, show_default=True, type=int, help="Maximum in-flight image jobs.")
+@click.option("--max-http-concurrency-per-image", default=1, show_default=True, type=int, help="Maximum in-flight VLM HTTP requests per image job.")
 @click.option("--per-image-timeout", default=600.0, show_default=True, type=float, help="Timeout per image in seconds.")
 @click.option("--http-timeout", default=600, show_default=True, type=int, help="HTTP read timeout passed to MinerUClient.")
 @click.option("--connect-timeout", default=10, show_default=True, type=int, help="HTTP connect timeout passed to MinerUClient.")
@@ -408,6 +425,7 @@ def main(
     table_enable: bool,
     image_analysis: bool,
     max_concurrency: int,
+    max_http_concurrency_per_image: int,
     per_image_timeout: float,
     http_timeout: int,
     connect_timeout: int,
@@ -419,6 +437,8 @@ def main(
 ) -> None:
     if stream and not dissection_enable:
         raise click.ClickException("--stream requires --dissection")
+    if max_http_concurrency_per_image < 1:
+        raise click.ClickException("--max-http-concurrency-per-image must be at least 1")
     options = ImageOcrOptions(
         input_path=input_path,
         output_dir=output_dir,
@@ -430,6 +450,7 @@ def main(
         table_enable=table_enable,
         image_analysis=image_analysis,
         max_concurrency=max_concurrency,
+        max_http_concurrency_per_image=max_http_concurrency_per_image,
         per_image_timeout=per_image_timeout,
         http_timeout=http_timeout,
         connect_timeout=connect_timeout,

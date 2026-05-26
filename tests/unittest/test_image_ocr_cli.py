@@ -93,6 +93,53 @@ def test_write_success_outputs_mineru_like_files(tmp_path):
     assert status["elapsed_seconds"] == 1.25
 
 
+def test_process_image_job_records_output_generation_stage(monkeypatch, tmp_path):
+    image_path = tmp_path / "page.png"
+    _make_image(image_path)
+    job = image_ocr.ImageJob(image_path, "page", tmp_path / "out" / "page" / "vlm")
+    options = image_ocr.ImageOcrOptions(
+        input_path=image_path,
+        output_dir=tmp_path / "out",
+        dissection_enable=True,
+    )
+
+    class FakeClient:
+        async def aio_two_step_extract(
+            self,
+            image,
+            semaphore=None,
+            image_analysis=None,
+            dissection_recorder=None,
+            dissection_stream=False,
+            page_idx=0,
+        ):
+            dissection_recorder.record_pipeline_started()
+            dissection_recorder.record_stage_started("layout_detection")
+            dissection_recorder.record_stage_finished("layout_detection", "completed")
+            return [{"type": "text", "bbox": [0, 0, 1, 1], "content": "hello"}]
+
+    monkeypatch.setattr(
+        image_ocr,
+        "build_middle_json_from_blocks",
+        lambda blocks, image_size: {"pdf_info": [{"page_idx": 0, "page_size": list(image_size)}]},
+    )
+    monkeypatch.setattr(image_ocr, "render_outputs", lambda middle_json: ("hello", []))
+
+    result = asyncio.run(
+        image_ocr.process_image_job(
+            FakeClient(),
+            job,
+            options,
+        )
+    )
+
+    assert result.status == "completed"
+    manifest = json.loads((job.parse_dir / "dissection" / "manifest.json").read_text(encoding="utf-8"))
+    stages = {stage["name"]: stage for stage in manifest["pipeline"]["stages"]}
+    assert manifest["pipeline"]["status"] == "completed"
+    assert stages["output_generation"]["status"] == "completed"
+
+
 def test_cli_parses_http_scheduler_options(monkeypatch, tmp_path):
     image_path = tmp_path / "page.png"
     _make_image(image_path)
@@ -121,6 +168,8 @@ def test_cli_parses_http_scheduler_options(monkeypatch, tmp_path):
             "--resume",
             "--max-concurrency",
             "7",
+            "--max-http-concurrency-per-image",
+            "11",
             "--per-image-timeout",
             "12",
             "--http-timeout",
@@ -148,6 +197,7 @@ def test_cli_parses_http_scheduler_options(monkeypatch, tmp_path):
     assert captured["recognition_server_url"] == "http://recognition"
     assert captured["resume"] is True
     assert captured["max_concurrency"] == 7
+    assert captured["max_http_concurrency_per_image"] == 11
     assert captured["per_image_timeout"] == 12
     assert captured["http_timeout"] == 13
     assert captured["connect_timeout"] == 3
@@ -159,6 +209,73 @@ def test_cli_parses_http_scheduler_options(monkeypatch, tmp_path):
     assert captured["image_analysis"] is False
     assert captured["dissection_enable"] is True
     assert captured["stream"] is True
+
+
+def test_cli_defaults_http_concurrency_per_image_to_one(monkeypatch, tmp_path):
+    image_path = tmp_path / "page.png"
+    _make_image(image_path)
+    captured = {}
+
+    async def fake_run_image_ocr(options):
+        captured.update(options.__dict__)
+        return []
+
+    monkeypatch.setattr(image_ocr, "run_image_ocr", fake_run_image_ocr)
+
+    result = CliRunner().invoke(
+        image_ocr.main,
+        [
+            "-p",
+            str(image_path),
+            "-o",
+            str(tmp_path / "out"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["max_http_concurrency_per_image"] == 1
+
+
+def test_create_client_uses_http_concurrency_per_image(monkeypatch, tmp_path):
+    import mineru_vl_utils
+
+    captured = {}
+
+    class FakeMinerUClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(mineru_vl_utils, "MinerUClient", FakeMinerUClient)
+    options = image_ocr.ImageOcrOptions(
+        input_path=tmp_path / "page.png",
+        output_dir=tmp_path / "out",
+        max_concurrency=8,
+        max_http_concurrency_per_image=16,
+    )
+
+    image_ocr.create_mineru_client(options)
+
+    assert captured["max_concurrency"] == 16
+
+
+def test_cli_rejects_invalid_http_concurrency_per_image(tmp_path):
+    image_path = tmp_path / "page.png"
+    _make_image(image_path)
+
+    result = CliRunner().invoke(
+        image_ocr.main,
+        [
+            "-p",
+            str(image_path),
+            "-o",
+            str(tmp_path / "out"),
+            "--max-http-concurrency-per-image",
+            "0",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "--max-http-concurrency-per-image must be at least 1" in result.output
 
 
 def test_cli_rejects_stream_without_dissection(tmp_path):
