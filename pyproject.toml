@@ -129,6 +129,7 @@ License = "https://github.com/opendatalab/MinerU/blob/master/LICENSE.md"
 [project.scripts]
 mineru = "mineru.cli.client:main"
 mineru-ocr-images = "mineru.cli.image_ocr:main"
+mineru-ocr-documents = "mineru.cli.document_ocr:main"
 mineru-vllm-server = "mineru.cli.vlm_server:vllm_server"
 mineru-lmdeploy-server = "mineru.cli.vlm_server:lmdeploy_server"
 mineru-openai-server = "mineru.cli.vlm_server:openai_server"
