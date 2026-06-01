@@ -13,6 +13,11 @@ def _make_image(path: Path, size=(16, 12)):
     Image.new("RGB", size, (255, 255, 255)).save(path)
 
 
+def _pixel_is_changed(path: Path, xy: tuple[int, int]) -> bool:
+    with Image.open(path) as image:
+        return image.convert("RGB").getpixel(xy) != (255, 255, 255)
+
+
 def test_collect_image_jobs_skips_completed_outputs_when_resuming(tmp_path):
     first = tmp_path / "a.png"
     second = tmp_path / "nested" / "a.jpg"
@@ -124,13 +129,73 @@ def test_write_success_outputs_writes_origin_and_layout_images(tmp_path):
     )
 
     origin_path = job.parse_dir / "page_origin.jpg"
+    model_layout_path = job.parse_dir / "page_model_layout.png"
     layout_path = job.parse_dir / "page_layout.png"
     assert origin_path.read_bytes() == image_path.read_bytes()
+    assert model_layout_path.is_file()
     assert layout_path.is_file()
 
     with Image.open(layout_path) as layout_image:
         assert layout_image.size == (100, 80)
         assert layout_image.getpixel((12, 12)) != (255, 255, 255)
+
+
+def test_visual_outputs_separate_raw_model_and_postprocessed_layout(tmp_path):
+    image_path = tmp_path / "page.png"
+    _make_image(image_path, size=(100, 80))
+    job = image_ocr.ImageJob(image_path, "page", tmp_path / "out" / "page" / "vlm")
+    blocks = [
+        {"type": "title", "bbox": [10, 10, 30, 30], "content": "raw title"},
+        {"type": "text", "bbox": [0.4, 0.1, 0.6, 0.3], "content": "raw text"},
+        {"type": "broken", "bbox": [70, 20, 60, 30], "content": "skip me"},
+    ]
+    middle_json = {
+        "pdf_info": [
+            {
+                "page_idx": 0,
+                "page_size": [100, 80],
+                "para_blocks": [
+                    {"type": "table", "bbox": [70, 45, 95, 70]},
+                ],
+            }
+        ]
+    }
+
+    image_ocr.write_success_outputs(
+        job,
+        blocks=blocks,
+        middle_json=middle_json,
+        markdown="hello",
+        content_list=[],
+        elapsed_seconds=1.25,
+    )
+
+    model_layout_path = job.parse_dir / "page_model_layout.png"
+    layout_path = job.parse_dir / "page_layout.png"
+
+    assert _pixel_is_changed(model_layout_path, (12, 12))
+    assert _pixel_is_changed(model_layout_path, (42, 12))
+    assert not _pixel_is_changed(model_layout_path, (72, 47))
+
+    assert _pixel_is_changed(layout_path, (72, 47))
+    assert not _pixel_is_changed(layout_path, (12, 12))
+    assert not _pixel_is_changed(layout_path, (42, 12))
+
+
+def test_model_layout_draws_raw_type_label_on_bbox_boundary(tmp_path):
+    image_path = tmp_path / "page.png"
+    _make_image(image_path, size=(120, 90))
+    with Image.open(image_path) as source_image:
+        rendered = image_ocr.render_model_layout_image(
+            source_image,
+            [{"type": "raw_custom_type", "bbox": [20, 25, 80, 60], "content": "hello"}],
+        )
+
+    rendered_path = tmp_path / "rendered.png"
+    rendered.save(rendered_path)
+
+    assert _pixel_is_changed(rendered_path, (22, 12))
+    assert _pixel_is_changed(rendered_path, (22, 27))
 
 
 def test_process_image_job_records_output_generation_stage(monkeypatch, tmp_path):
