@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -11,7 +12,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Iterable
 
 import click
-from PIL import Image
+from PIL import Image, ImageDraw
 
 
 IMAGE_SUFFIXES = {
@@ -67,6 +68,34 @@ class ImageJobResult:
 
 ImageWorker = Callable[[ImageJob], Awaitable[ImageJobResult]]
 
+_LAYOUT_FILL_ALPHA = 76
+_LAYOUT_OUTLINE_ALPHA = 230
+
+_LAYOUT_COLORS: dict[str, tuple[int, int, int]] = {
+    "code_body": (102, 0, 204),
+    "code_caption": (204, 153, 255),
+    "code_footnote": (229, 204, 255),
+    "table_body": (204, 204, 0),
+    "table_caption": (255, 255, 102),
+    "table_footnote": (229, 255, 204),
+    "image_body": (153, 255, 51),
+    "chart_body": (153, 255, 51),
+    "image_caption": (102, 178, 255),
+    "chart_caption": (102, 178, 255),
+    "image_footnote": (255, 178, 102),
+    "chart_footnote": (255, 178, 102),
+    "title": (102, 102, 255),
+    "text": (153, 0, 76),
+    "ref_text": (153, 0, 76),
+    "abstract": (153, 0, 76),
+    "interline_equation": (0, 255, 0),
+    "list": (40, 169, 92),
+    "index": (40, 169, 92),
+    "seal": (153, 255, 51),
+}
+
+_NESTED_LAYOUT_TYPES = {"image", "chart", "code", "table"}
+
 
 def _json_default(value: Any):
     if hasattr(value, "model_dump"):
@@ -82,6 +111,136 @@ def _write_json(path: Path, data: Any) -> None:
         json.dumps(data, ensure_ascii=False, indent=2, default=_json_default),
         encoding="utf-8",
     )
+
+
+def _origin_image_path(job: ImageJob) -> Path:
+    return job.parse_dir / f"{job.stem}_origin{job.path.suffix}"
+
+
+def _layout_image_path(job: ImageJob) -> Path:
+    return job.parse_dir / f"{job.stem}_layout.png"
+
+
+def _coerce_bbox(
+    bbox: Any,
+    *,
+    image_size: tuple[int, int],
+) -> tuple[int, int, int, int] | None:
+    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+        return None
+    try:
+        x0, y0, x1, y1 = [float(value) for value in bbox]
+    except (TypeError, ValueError):
+        return None
+
+    width, height = image_size
+    if max(abs(x0), abs(y0), abs(x1), abs(y1)) <= 1:
+        x0, x1 = x0 * width, x1 * width
+        y0, y1 = y0 * height, y1 * height
+
+    x0 = max(0, min(width, round(x0)))
+    y0 = max(0, min(height, round(y0)))
+    x1 = max(0, min(width, round(x1)))
+    y1 = max(0, min(height, round(y1)))
+    if x0 >= x1 or y0 >= y1:
+        return None
+    return x0, y0, x1, y1
+
+
+def _iter_layout_blocks(
+    middle_json: dict[str, Any],
+    *,
+    image_size: tuple[int, int],
+) -> Iterable[tuple[str, tuple[int, int, int, int]]]:
+    pdf_info = middle_json.get("pdf_info")
+    if not isinstance(pdf_info, list) or not pdf_info:
+        return
+    page = pdf_info[0]
+    if not isinstance(page, dict):
+        return
+
+    para_blocks = page.get("para_blocks") or []
+    if not isinstance(para_blocks, list):
+        return
+
+    for block in para_blocks:
+        if not isinstance(block, dict):
+            continue
+        block_type = str(block.get("type", ""))
+        if block_type in _NESTED_LAYOUT_TYPES and isinstance(block.get("blocks"), list):
+            for nested_block in block["blocks"]:
+                if not isinstance(nested_block, dict):
+                    continue
+                bbox = _coerce_bbox(nested_block.get("bbox"), image_size=image_size)
+                if bbox is not None:
+                    yield str(nested_block.get("type", block_type)), bbox
+            continue
+
+        bbox = _coerce_bbox(block.get("bbox"), image_size=image_size)
+        if bbox is not None:
+            yield block_type, bbox
+
+
+def _draw_badge(
+    draw: ImageDraw.ImageDraw,
+    *,
+    bbox: tuple[int, int, int, int],
+    index: int,
+    image_size: tuple[int, int],
+) -> None:
+    width, height = image_size
+    label = str(index)
+    text_bbox = draw.textbbox((0, 0), label)
+    text_width = text_bbox[2] - text_bbox[0]
+    text_height = text_bbox[3] - text_bbox[1]
+    pad_x = 4
+    pad_y = 2
+    badge_width = max(14, text_width + pad_x * 2)
+    badge_height = max(14, text_height + pad_y * 2)
+    x0 = min(max(bbox[2] - badge_width, 0), max(width - badge_width, 0))
+    y0 = min(max(bbox[1], 0), max(height - badge_height, 0))
+    x1 = x0 + badge_width
+    y1 = y0 + badge_height
+    draw.rounded_rectangle((x0, y0, x1, y1), radius=badge_height // 2, fill=(255, 0, 0, 235))
+    draw.text(
+        (x0 + (badge_width - text_width) / 2, y0 + (badge_height - text_height) / 2 - 1),
+        label,
+        fill=(255, 255, 255, 255),
+    )
+
+
+def render_layout_image(
+    source_image: Image.Image,
+    middle_json: dict[str, Any],
+) -> Image.Image:
+    annotated = source_image.convert("RGBA")
+    overlay = Image.new("RGBA", annotated.size, (0, 0, 0, 0))
+    overlay_draw = ImageDraw.Draw(overlay)
+    annotations = list(_iter_layout_blocks(middle_json, image_size=annotated.size))
+
+    for block_type, bbox in annotations:
+        rgb = _LAYOUT_COLORS.get(block_type, (255, 0, 0))
+        overlay_draw.rectangle(
+            bbox,
+            fill=(*rgb, _LAYOUT_FILL_ALPHA),
+            outline=(*rgb, _LAYOUT_OUTLINE_ALPHA),
+            width=2,
+        )
+
+    annotated = Image.alpha_composite(annotated, overlay)
+    badge_draw = ImageDraw.Draw(annotated)
+    for index, (_, bbox) in enumerate(annotations, start=1):
+        _draw_badge(badge_draw, bbox=bbox, index=index, image_size=annotated.size)
+
+    return annotated.convert("RGB")
+
+
+def write_image_visual_outputs(job: ImageJob, middle_json: dict[str, Any]) -> None:
+    job.parse_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(job.path, _origin_image_path(job))
+    with Image.open(job.path) as source_image:
+        source_image.load()
+        render_layout_image(source_image, middle_json).save(_layout_image_path(job))
 
 
 def _status_path(job: ImageJob) -> Path:
@@ -240,6 +399,7 @@ def write_success_outputs(
     _write_json(job.parse_dir / f"{job.stem}_model.json", blocks)
     _write_json(job.parse_dir / f"{job.stem}_middle.json", middle_json)
     _write_json(job.parse_dir / f"{job.stem}_content_list.json", content_list)
+    write_image_visual_outputs(job, middle_json)
     _write_json(
         _status_path(job),
         {
