@@ -93,6 +93,46 @@ def test_write_success_outputs_mineru_like_files(tmp_path):
     assert status["elapsed_seconds"] == 1.25
 
 
+def test_write_success_outputs_writes_origin_and_layout_images(tmp_path):
+    image_path = tmp_path / "page.jpg"
+    _make_image(image_path, size=(100, 80))
+    job = image_ocr.ImageJob(image_path, "page", tmp_path / "out" / "page" / "vlm")
+    blocks = [{"type": "text", "bbox": [0.1, 0.1, 0.6, 0.5], "content": "hello"}]
+    middle_json = {
+        "pdf_info": [
+            {
+                "page_idx": 0,
+                "page_size": [100, 80],
+                "para_blocks": [
+                    {"type": "text", "bbox": [10, 10, 60, 40]},
+                    {"type": "table", "bbox": [65, 10, 95, 45], "blocks": [
+                        {"type": "table_body", "bbox": [65, 10, 95, 45]}
+                    ]},
+                    {"type": "text", "bbox": [90, 70, 80, 75]},
+                ],
+            }
+        ]
+    }
+
+    image_ocr.write_success_outputs(
+        job,
+        blocks=blocks,
+        middle_json=middle_json,
+        markdown="hello",
+        content_list=[],
+        elapsed_seconds=1.25,
+    )
+
+    origin_path = job.parse_dir / "page_origin.jpg"
+    layout_path = job.parse_dir / "page_layout.png"
+    assert origin_path.read_bytes() == image_path.read_bytes()
+    assert layout_path.is_file()
+
+    with Image.open(layout_path) as layout_image:
+        assert layout_image.size == (100, 80)
+        assert layout_image.getpixel((12, 12)) != (255, 255, 255)
+
+
 def test_process_image_job_records_output_generation_stage(monkeypatch, tmp_path):
     image_path = tmp_path / "page.png"
     _make_image(image_path)
