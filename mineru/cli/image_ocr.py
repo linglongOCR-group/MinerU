@@ -121,6 +121,10 @@ def _layout_image_path(job: ImageJob) -> Path:
     return job.parse_dir / f"{job.stem}_layout.png"
 
 
+def _model_layout_image_path(job: ImageJob) -> Path:
+    return job.parse_dir / f"{job.stem}_model_layout.png"
+
+
 def _coerce_bbox(
     bbox: Any,
     *,
@@ -181,42 +185,59 @@ def _iter_layout_blocks(
             yield block_type, bbox
 
 
-def _draw_badge(
+def _iter_model_blocks(
+    blocks: list[dict[str, Any]],
+    *,
+    image_size: tuple[int, int],
+) -> Iterable[tuple[str, tuple[int, int, int, int]]]:
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        bbox = _coerce_bbox(block.get("bbox"), image_size=image_size)
+        if bbox is not None:
+            yield str(block.get("type", "")), bbox
+
+
+def _draw_label(
     draw: ImageDraw.ImageDraw,
     *,
     bbox: tuple[int, int, int, int],
-    index: int,
+    label: str,
+    color: tuple[int, int, int],
     image_size: tuple[int, int],
 ) -> None:
     width, height = image_size
-    label = str(index)
+    label = label or "unknown"
     text_bbox = draw.textbbox((0, 0), label)
     text_width = text_bbox[2] - text_bbox[0]
     text_height = text_bbox[3] - text_bbox[1]
-    pad_x = 4
+    pad_x = 5
     pad_y = 2
-    badge_width = max(14, text_width + pad_x * 2)
-    badge_height = max(14, text_height + pad_y * 2)
-    x0 = min(max(bbox[2] - badge_width, 0), max(width - badge_width, 0))
-    y0 = min(max(bbox[1], 0), max(height - badge_height, 0))
-    x1 = x0 + badge_width
-    y1 = y0 + badge_height
-    draw.rounded_rectangle((x0, y0, x1, y1), radius=badge_height // 2, fill=(255, 0, 0, 235))
+    label_width = min(max(16, text_width + pad_x * 2), width)
+    label_height = max(14, text_height + pad_y * 2)
+    x0 = min(max(bbox[0], 0), max(width - label_width, 0))
+    if bbox[1] >= label_height:
+        y0 = bbox[1] - label_height
+    else:
+        y0 = min(max(bbox[1], 0), max(height - label_height, 0))
+    x1 = x0 + label_width
+    y1 = y0 + label_height
+    draw.rectangle((x0, y0, x1, y1), fill=(*color, 240))
     draw.text(
-        (x0 + (badge_width - text_width) / 2, y0 + (badge_height - text_height) / 2 - 1),
+        (x0 + pad_x, y0 + (label_height - text_height) / 2 - 1),
         label,
         fill=(255, 255, 255, 255),
     )
 
 
-def render_layout_image(
+def render_annotated_layout_image(
     source_image: Image.Image,
-    middle_json: dict[str, Any],
+    annotations: Iterable[tuple[str, tuple[int, int, int, int]]],
 ) -> Image.Image:
     annotated = source_image.convert("RGBA")
     overlay = Image.new("RGBA", annotated.size, (0, 0, 0, 0))
     overlay_draw = ImageDraw.Draw(overlay)
-    annotations = list(_iter_layout_blocks(middle_json, image_size=annotated.size))
+    annotations = list(annotations)
 
     for block_type, bbox in annotations:
         rgb = _LAYOUT_COLORS.get(block_type, (255, 0, 0))
@@ -228,18 +249,51 @@ def render_layout_image(
         )
 
     annotated = Image.alpha_composite(annotated, overlay)
-    badge_draw = ImageDraw.Draw(annotated)
-    for index, (_, bbox) in enumerate(annotations, start=1):
-        _draw_badge(badge_draw, bbox=bbox, index=index, image_size=annotated.size)
+    label_draw = ImageDraw.Draw(annotated)
+    for block_type, bbox in annotations:
+        rgb = _LAYOUT_COLORS.get(block_type, (255, 0, 0))
+        _draw_label(
+            label_draw,
+            bbox=bbox,
+            label=block_type,
+            color=rgb,
+            image_size=annotated.size,
+        )
 
     return annotated.convert("RGB")
 
 
-def write_image_visual_outputs(job: ImageJob, middle_json: dict[str, Any]) -> None:
+def render_layout_image(
+    source_image: Image.Image,
+    middle_json: dict[str, Any],
+) -> Image.Image:
+    return render_annotated_layout_image(
+        source_image,
+        _iter_layout_blocks(middle_json, image_size=source_image.size),
+    )
+
+
+def render_model_layout_image(
+    source_image: Image.Image,
+    blocks: list[dict[str, Any]],
+) -> Image.Image:
+    return render_annotated_layout_image(
+        source_image,
+        _iter_model_blocks(blocks, image_size=source_image.size),
+    )
+
+
+def write_image_visual_outputs(
+    job: ImageJob,
+    *,
+    blocks: list[dict[str, Any]],
+    middle_json: dict[str, Any],
+) -> None:
     job.parse_dir.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(job.path, _origin_image_path(job))
     with Image.open(job.path) as source_image:
         source_image.load()
+        render_model_layout_image(source_image, blocks).save(_model_layout_image_path(job))
         render_layout_image(source_image, middle_json).save(_layout_image_path(job))
 
 
@@ -399,7 +453,7 @@ def write_success_outputs(
     _write_json(job.parse_dir / f"{job.stem}_model.json", blocks)
     _write_json(job.parse_dir / f"{job.stem}_middle.json", middle_json)
     _write_json(job.parse_dir / f"{job.stem}_content_list.json", content_list)
-    write_image_visual_outputs(job, middle_json)
+    write_image_visual_outputs(job, blocks=blocks, middle_json=middle_json)
     _write_json(
         _status_path(job),
         {
