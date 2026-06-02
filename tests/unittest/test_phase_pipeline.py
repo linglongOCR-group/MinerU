@@ -188,3 +188,107 @@ def test_process_full_window_calls_both_stages(monkeypatch, tmp_path):
     recognition_cached = document_ocr.read_valid_window_cache(window)
     assert recognition_cached is not None
     assert recognition_cached["blocks_by_page"][0][0]["content"] == "full-pipeline"
+
+
+def _make_pdf_placeholder(path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"%PDF-1.7\n%placeholder\n")
+
+
+def test_run_layout_phase_writes_layout_artifact(monkeypatch, tmp_path):
+    """Layout phase produces _layout.json but NOT _model.json or .md."""
+    from mineru.cli import layout_artifact
+
+    image_path = tmp_path / "doc.png"
+    _make_image(image_path)
+
+    jobs = [
+        document_ocr.DocumentJob.from_path(
+            image_path, "image", "doc",
+            tmp_path / "out" / "doc" / "vlm", 0, 1, 0, 0,
+        ),
+    ]
+    monkeypatch.setattr(document_ocr, "collect_document_jobs", lambda *a, **kw: jobs)
+
+    async def fake_process_layout_window(client, window, options):
+        document_ocr.write_layout_window_cache(
+            window,
+            blocks_by_page=[[{"type": "text", "bbox": [0, 0, 1, 1]}]],
+            page_sizes=[[16, 12]],
+            elapsed_seconds=0.1,
+        )
+
+    monkeypatch.setattr(document_ocr, "process_layout_window", fake_process_layout_window)
+
+    class FakeClient:
+        pass
+
+    options = document_ocr.DocumentOcrOptions(
+        input_path=tmp_path,
+        output_dir=tmp_path / "out",
+        phase=document_ocr.OcrPhase.LAYOUT,
+        progress=False,
+    )
+    results = asyncio.run(
+        document_ocr.run_document_ocr(options, client_factory=lambda _o: FakeClient())
+    )
+
+    assert results[0].status == "completed"
+    layout_path = tmp_path / "out" / "doc" / "vlm" / "doc_layout.json"
+    assert layout_path.exists(), "Layout artifact should exist"
+    assert not (tmp_path / "out" / "doc" / "vlm" / "doc_model.json").exists()
+    assert not (tmp_path / "out" / "doc" / "vlm" / "doc.md").exists()
+
+
+def test_run_full_phase_writes_both_outputs(monkeypatch, tmp_path):
+    """Full phase produces layout artifact AND standard OCR outputs."""
+    image_path = tmp_path / "doc.png"
+    _make_image(image_path)
+
+    jobs = [
+        document_ocr.DocumentJob.from_path(
+            image_path, "image", "doc",
+            tmp_path / "out" / "doc" / "vlm", 0, 1, 0, 0,
+        ),
+    ]
+    monkeypatch.setattr(document_ocr, "collect_document_jobs", lambda *a, **kw: jobs)
+
+    async def fake_process_full_window(client, window, options):
+        document_ocr.write_layout_window_cache(
+            window,
+            blocks_by_page=[[{"type": "text", "bbox": [0, 0, 1, 1]}]],
+            page_sizes=[[16, 12]],
+            elapsed_seconds=0.1,
+        )
+        document_ocr.write_window_cache(
+            window,
+            blocks_by_page=[[{"type": "text", "bbox": [0, 0, 1, 1], "content": "hello"}]],
+            page_sizes=[[16, 12]],
+            elapsed_seconds=0.2,
+        )
+
+    monkeypatch.setattr(document_ocr, "process_full_window", fake_process_full_window)
+    monkeypatch.setattr(
+        document_ocr,
+        "build_middle_json_for_document",
+        lambda doc, pages, sizes: {"pdf_info": [{"page_idx": 0}]},
+    )
+    monkeypatch.setattr(document_ocr, "render_outputs", lambda mj: ("hello", []))
+
+    class FakeClient:
+        pass
+
+    options = document_ocr.DocumentOcrOptions(
+        input_path=tmp_path,
+        output_dir=tmp_path / "out",
+        phase=document_ocr.OcrPhase.FULL,
+        progress=False,
+    )
+    results = asyncio.run(
+        document_ocr.run_document_ocr(options, client_factory=lambda _o: FakeClient())
+    )
+
+    assert results[0].status == "completed"
+    assert (tmp_path / "out" / "doc" / "vlm" / "doc_layout.json").exists()
+    assert (tmp_path / "out" / "doc" / "vlm" / "doc_model.json").exists()
+    assert (tmp_path / "out" / "doc" / "vlm" / "doc.md").exists()

@@ -202,6 +202,12 @@ def test_run_document_ocr_continues_after_document_failure(monkeypatch, tmp_path
     async def fake_process_window(client, window, options):
         if window.document_stem == "bad":
             raise RuntimeError("bad window")
+        document_ocr.write_layout_window_cache(
+            window,
+            blocks_by_page=[[{"type": "text", "bbox": [0, 0, 1, 1]}]],
+            page_sizes=[[16, 12]],
+            elapsed_seconds=0.05,
+        )
         document_ocr.write_window_cache(
             window,
             blocks_by_page=[[{"content": "ok"}]],
@@ -210,6 +216,7 @@ def test_run_document_ocr_continues_after_document_failure(monkeypatch, tmp_path
         )
 
     monkeypatch.setattr(document_ocr, "process_window_job", fake_process_window)
+    monkeypatch.setattr(document_ocr, "process_full_window", fake_process_window)
     monkeypatch.setattr(
         document_ocr,
         "build_middle_json_for_document",

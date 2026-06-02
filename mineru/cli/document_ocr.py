@@ -620,6 +620,68 @@ async def process_window_job(client: Any, window: WindowJob, options: DocumentOc
             recorder.finalize()
 
 
+def write_document_layout_artifact(
+    job: DocumentJob,
+    windows: list[WindowJob],
+) -> None:
+    """Collect layout window caches and write a document-level layout artifact."""
+    from mineru.cli.layout_artifact import (
+        LayoutArtifact, LayoutBlock, LayoutMeta, LayoutPage, LayoutSource,
+        write_layout_artifact,
+    )
+
+    pages = []
+    for window in sorted(windows, key=lambda w: w.window_index):
+        cache = read_valid_layout_window_cache(window)
+        if cache is None:
+            raise RuntimeError(
+                f"Missing valid layout cache for {job.stem} window {window.window_index}"
+            )
+        page_sizes = cache["metadata"].get("page_sizes", [])
+        for page_idx_in_window, (page_blocks, page_size) in enumerate(
+            zip(cache["blocks_by_page"], page_sizes)
+        ):
+            global_page_idx = window.start_page_id + page_idx_in_window
+            blocks = [
+                LayoutBlock(
+                    id=f"p{global_page_idx:04d}-b{block_idx:06d}",
+                    index=block_idx,
+                    type=block.get("type", "text"),
+                    bbox=block.get("bbox", [0, 0, 1, 1]),
+                    angle=block.get("angle", 0),
+                    merge_prev=block.get("merge_prev", False),
+                )
+                for block_idx, block in enumerate(page_blocks)
+            ]
+            pages.append(LayoutPage(
+                page_idx=global_page_idx,
+                page_size=page_size,
+                blocks=blocks,
+            ))
+
+    stat = job.path.stat()
+    artifact = LayoutArtifact(
+        schema="mineru.vlm.layout.v1",
+        stage="layout",
+        backend="vlm",
+        source=LayoutSource(
+            path=str(job.path),
+            type=job.document_type,
+            size=stat.st_size,
+            mtime=stat.st_mtime,
+            page_count=job.page_count,
+            start_page_id=job.start_page_id,
+            end_page_id=job.end_page_id,
+        ),
+        layout=LayoutMeta(
+            model="vlm",
+            layout_image_size=(1036, 1036),
+        ),
+        pages=pages,
+    )
+    write_layout_artifact(artifact, job.parse_dir / f"{job.stem}_layout.json")
+
+
 async def process_layout_window(
     client: Any,
     window: WindowJob,
@@ -844,20 +906,36 @@ async def run_document_ocr(
     for window in windows:
         windows_by_document.setdefault(window.document_index, []).append(window)
 
+    # Choose processing function based on phase
+    if options.phase == OcrPhase.FULL:
+        process_fn = process_full_window
+    elif options.phase == OcrPhase.LAYOUT:
+        process_fn = process_layout_window
+    elif options.phase == OcrPhase.RECOGNIZE:
+        process_fn = process_recognition_window
+    else:
+        raise ValueError(f"Unknown phase: {options.phase}")
+
     client = client_factory(options)
     semaphore = asyncio.Semaphore(options.max_windows)
     failed_documents: dict[int, str] = {}
     document_starts = {index: time.monotonic() for index, _job in enumerate(jobs)}
 
     async def run_one(window: WindowJob) -> None:
-        if read_valid_window_cache(window) is not None:
-            return
+        # Skip if window cache already exists (for FULL/RECOGNIZE phases)
+        if options.phase in (OcrPhase.FULL, OcrPhase.RECOGNIZE):
+            if read_valid_window_cache(window) is not None:
+                return
+        # Skip if layout cache already exists (for LAYOUT phase)
+        if options.phase == OcrPhase.LAYOUT:
+            if read_valid_layout_window_cache(window) is not None:
+                return
         async with semaphore:
             if window.document_index in failed_documents:
                 return
             try:
                 await asyncio.wait_for(
-                    process_window_job(client, window, options),
+                    process_fn(client, window, options),
                     timeout=options.per_window_timeout,
                 )
             except asyncio.TimeoutError:
@@ -912,13 +990,35 @@ async def run_document_ocr(
             )
             continue
         try:
-            results.append(
-                assemble_document_outputs(
+            if options.phase == OcrPhase.LAYOUT:
+                # Layout-only: write layout artifact and status, no assembly
+                write_document_layout_artifact(job, document_windows)
+                write_document_status(
                     job,
-                    document_windows,
+                    status="completed",
                     elapsed_seconds=elapsed,
+                    completed_windows=len(document_windows),
+                    total_windows=len(document_windows),
                 )
-            )
+                results.append(
+                    DocumentJobResult(
+                        job=job,
+                        status="completed",
+                        elapsed_seconds=round(elapsed, 3),
+                    )
+                )
+            else:
+                # FULL or RECOGNIZE: assemble standard outputs
+                results.append(
+                    assemble_document_outputs(
+                        job,
+                        document_windows,
+                        elapsed_seconds=elapsed,
+                    )
+                )
+                # FULL also writes layout artifact for later re-runs
+                if options.phase == OcrPhase.FULL:
+                    write_document_layout_artifact(job, document_windows)
         except Exception as exc:
             write_document_status(
                 job,
