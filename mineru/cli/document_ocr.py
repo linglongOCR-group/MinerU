@@ -1086,6 +1086,10 @@ def main(
     dissection_enable: bool,
     stream: bool,
 ) -> None:
+    click.echo(
+        "WARNING: mineru-ocr-documents is deprecated. Use 'mineru-phase run' instead.",
+        err=True,
+    )
     options = DocumentOcrOptions(
         input_path=input_path,
         output_dir=output_dir,

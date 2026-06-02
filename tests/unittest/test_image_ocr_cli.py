@@ -400,3 +400,22 @@ def test_cli_rejects_stream_without_dissection(tmp_path):
 
     assert result.exit_code != 0
     assert "--stream requires --dissection" in result.output
+
+
+def test_cli_prints_deprecation_notice(monkeypatch, tmp_path):
+    image_path = tmp_path / "page.png"
+    _make_image(image_path)
+
+    async def fake_run_image_ocr(options):
+        return []
+
+    monkeypatch.setattr(image_ocr, "run_image_ocr", fake_run_image_ocr)
+
+    result = CliRunner().invoke(
+        image_ocr.main,
+        ["-p", str(image_path), "-o", str(tmp_path / "out")],
+    )
+
+    assert result.exit_code == 0
+    assert "deprecated" in result.output.lower()
+    assert "mineru-phase" in result.output.lower()
