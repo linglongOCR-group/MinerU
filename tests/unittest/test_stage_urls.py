@@ -1,4 +1,5 @@
 import inspect
+import zipfile
 
 import pytest
 from fastapi import HTTPException
@@ -27,11 +28,15 @@ def test_parse_request_form_data_includes_stage_urls_only_when_provided():
         return_images=False,
         response_format_zip=False,
         return_original_file=False,
+        dissection_enable=True,
+        stream=True,
     )
 
     assert form_data["server_url"] == "http://shared"
     assert form_data["layout_server_url"] == "http://layout"
     assert form_data["recognition_server_url"] == "http://recognition"
+    assert form_data["dissection_enable"] == "true"
+    assert form_data["stream"] == "true"
 
     form_data = api_client.build_parse_request_form_data(
         lang_list=["ch"],
@@ -51,11 +56,15 @@ def test_parse_request_form_data_includes_stage_urls_only_when_provided():
         return_images=False,
         response_format_zip=False,
         return_original_file=False,
+        dissection_enable=False,
+        stream=False,
     )
 
     assert "server_url" not in form_data
     assert "layout_server_url" not in form_data
     assert "recognition_server_url" not in form_data
+    assert form_data["dissection_enable"] == "false"
+    assert form_data["stream"] == "false"
 
 
 def test_fastapi_form_exposes_stage_url_fields():
@@ -63,8 +72,47 @@ def test_fastapi_form_exposes_stage_url_fields():
 
     assert "layout_server_url" in signature.parameters
     assert "recognition_server_url" in signature.parameters
+    assert "dissection_enable" in signature.parameters
+    assert "stream" in signature.parameters
     assert "layout_server_url" in fast_api.ParseRequestOptions.__dataclass_fields__
     assert "recognition_server_url" in fast_api.AsyncParseTask.__dataclass_fields__
+    assert "dissection_enable" in fast_api.ParseRequestOptions.__dataclass_fields__
+    assert "dissection_enable" in fast_api.AsyncParseTask.__dataclass_fields__
+    assert "stream" in fast_api.ParseRequestOptions.__dataclass_fields__
+    assert "stream" in fast_api.AsyncParseTask.__dataclass_fields__
+
+
+def test_result_zip_includes_dissection_directory_when_enabled(tmp_path):
+    parse_dir = tmp_path / "doc" / "vlm"
+    dissection_dir = parse_dir / "dissection"
+    dissection_dir.mkdir(parents=True)
+    (parse_dir / "doc.md").write_text("hello", encoding="utf-8")
+    (dissection_dir / "manifest.json").write_text("{}", encoding="utf-8")
+    (dissection_dir / "errors.jsonl").write_text("", encoding="utf-8")
+
+    zip_path = fast_api.create_result_zip(
+        output_dir=str(tmp_path),
+        pdf_file_names=["doc"],
+        backend="vlm-http-client",
+        parse_method="auto",
+        return_md=True,
+        return_middle_json=False,
+        return_model_output=False,
+        return_content_list=False,
+        return_images=False,
+        return_original_file=False,
+        dissection_enable=True,
+    )
+
+    try:
+        with zipfile.ZipFile(zip_path) as zf:
+            names = set(zf.namelist())
+    finally:
+        fast_api.cleanup_file(zip_path)
+
+    assert "doc/vlm/doc.md" in names
+    assert "doc/vlm/dissection/manifest.json" in names
+    assert "doc/vlm/dissection/errors.jsonl" in names
 
 
 @pytest.mark.parametrize(
