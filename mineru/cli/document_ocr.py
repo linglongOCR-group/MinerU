@@ -620,6 +620,192 @@ async def process_window_job(client: Any, window: WindowJob, options: DocumentOc
             recorder.finalize()
 
 
+async def process_layout_window(
+    client: Any,
+    window: WindowJob,
+    options: DocumentOcrOptions,
+) -> None:
+    """Run layout detection only for a window. Writes layout cache."""
+    start = time.monotonic()
+    recorder = None
+    try:
+        if options.dissection_enable:
+            from mineru_vl_utils.dissection import DissectionRecorder
+
+            recorder = DissectionRecorder(
+                window.document.parse_dir / "dissection" / "layout" / f"window_{window.window_index:05d}",
+                document_stem=window.document_stem,
+            )
+        if recorder is not None:
+            recorder.record_pipeline_started()
+            recorder.record_stage_started("layout_detection")
+
+        try:
+            if window.document.document_type == "image":
+                with Image.open(window.document.path) as src_image:
+                    src_image.load()
+                    image = src_image.convert("RGB")
+                try:
+                    layout_result = await client.aio_layout_detect(image)
+                    write_layout_window_cache(
+                        window,
+                        blocks_by_page=[[dict(block) for block in layout_result]],
+                        page_sizes=[list(image.size)],
+                        elapsed_seconds=time.monotonic() - start,
+                    )
+                finally:
+                    image.close()
+            else:
+                # PDF window — batch layout detect
+                pdf_bytes = window.document.path.read_bytes()
+                images_list = await aio_load_images_from_pdf_bytes_range(
+                    pdf_bytes,
+                    start_page_id=window.start_page_id,
+                    end_page_id=window.end_page_id,
+                    image_type=ImageType.PIL,
+                )
+                try:
+                    images = [d["img_pil"] for d in images_list]
+                    layout_results = await client.aio_batch_layout_detect(images)
+                    write_layout_window_cache(
+                        window,
+                        blocks_by_page=[
+                            [dict(block) for block in page_blocks]
+                            for page_blocks in layout_results
+                        ],
+                        page_sizes=[list(img.size) for img in images],
+                        elapsed_seconds=time.monotonic() - start,
+                    )
+                finally:
+                    _close_images(images_list)
+
+            if recorder is not None:
+                recorder.record_stage_finished("layout_detection")
+                recorder.record_pipeline_finished("completed")
+        except Exception as exc:
+            if recorder is not None:
+                recorder.record_stage_finished("layout_detection", "failed", exc)
+                recorder.record_pipeline_finished("failed", exc)
+            raise
+    finally:
+        if recorder is not None:
+            recorder.finalize()
+
+
+async def process_recognition_window(
+    client: Any,
+    window: WindowJob,
+    options: DocumentOcrOptions,
+) -> None:
+    """Run recognition from layout cache for a window. Writes window cache."""
+    from mineru_vl_utils.structs import ContentBlock, ExtractResult
+
+    start = time.monotonic()
+    recorder = None
+    try:
+        if options.dissection_enable:
+            from mineru_vl_utils.dissection import DissectionRecorder
+
+            recorder = DissectionRecorder(
+                window.document.parse_dir / "dissection" / "recognition" / f"window_{window.window_index:05d}",
+                document_stem=window.document_stem,
+            )
+        if recorder is not None:
+            recorder.record_pipeline_started()
+            recorder.record_stage_started("recognition")
+
+        try:
+            layout_cache = read_valid_layout_window_cache(window)
+            if layout_cache is None:
+                raise RuntimeError(
+                    f"No valid layout cache for {window.document_stem} window {window.window_index}. "
+                    "Run layout detection first."
+                )
+
+            cached_blocks_by_page = layout_cache["blocks_by_page"]
+            page_sizes = layout_cache["metadata"].get("page_sizes", [])
+
+            if window.document.document_type == "image":
+                with Image.open(window.document.path) as src_image:
+                    src_image.load()
+                    image = src_image.convert("RGB")
+                try:
+                    layout_blocks = ExtractResult([
+                        ContentBlock(
+                            b.get("type", "text"),
+                            b.get("bbox", [0, 0, 1, 1]),
+                            angle=b.get("angle", 0),
+                            merge_prev=b.get("merge_prev", False),
+                        )
+                        for b in cached_blocks_by_page[0]
+                    ])
+                    result = await client.aio_recognize_from_layout(image, layout_blocks)
+                    write_window_cache(
+                        window,
+                        blocks_by_page=[[dict(block) for block in result]],
+                        page_sizes=[list(image.size)],
+                        elapsed_seconds=time.monotonic() - start,
+                    )
+                finally:
+                    image.close()
+            else:
+                # PDF window — batch recognition from layout
+                pdf_bytes = window.document.path.read_bytes()
+                images_list = await aio_load_images_from_pdf_bytes_range(
+                    pdf_bytes,
+                    start_page_id=window.start_page_id,
+                    end_page_id=window.end_page_id,
+                    image_type=ImageType.PIL,
+                )
+                try:
+                    images = [d["img_pil"] for d in images_list]
+                    layout_blocks_by_page = []
+                    for page_blocks in cached_blocks_by_page:
+                        layout_blocks_by_page.append(ExtractResult([
+                            ContentBlock(
+                                b.get("type", "text"),
+                                b.get("bbox", [0, 0, 1, 1]),
+                                angle=b.get("angle", 0),
+                                merge_prev=b.get("merge_prev", False),
+                            )
+                            for b in page_blocks
+                        ]))
+                    results = await client.aio_batch_recognize_from_layout(images, layout_blocks_by_page)
+                    write_window_cache(
+                        window,
+                        blocks_by_page=[
+                            [dict(block) for block in page_blocks]
+                            for page_blocks in results
+                        ],
+                        page_sizes=[list(img.size) for img in images],
+                        elapsed_seconds=time.monotonic() - start,
+                    )
+                finally:
+                    _close_images(images_list)
+
+            if recorder is not None:
+                recorder.record_stage_finished("recognition")
+                recorder.record_pipeline_finished("completed")
+        except Exception as exc:
+            if recorder is not None:
+                recorder.record_stage_finished("recognition", "failed", exc)
+                recorder.record_pipeline_finished("failed", exc)
+            raise
+    finally:
+        if recorder is not None:
+            recorder.finalize()
+
+
+async def process_full_window(
+    client: Any,
+    window: WindowJob,
+    options: DocumentOcrOptions,
+) -> None:
+    """Full pipeline: layout then recognition. Writes both caches."""
+    await process_layout_window(client, window, options)
+    await process_recognition_window(client, window, options)
+
+
 @contextmanager
 def _temporary_env(updates: dict[str, str]):
     original = {key: os.environ.get(key) for key in updates}
