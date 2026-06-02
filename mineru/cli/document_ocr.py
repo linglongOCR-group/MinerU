@@ -415,6 +415,78 @@ def read_valid_layout_window_cache(window: WindowJob) -> dict[str, Any] | None:
     return cache
 
 
+def document_layout_artifact_path(job: DocumentJob) -> Path:
+    return job.parse_dir / f"{job.stem}_layout.json"
+
+
+def read_layout_window_cache_from_artifact(window: WindowJob) -> dict[str, Any] | None:
+    path = document_layout_artifact_path(window.document)
+    if not path.exists():
+        return None
+
+    from mineru.cli.layout_artifact import read_layout_artifact, validate_against_source
+
+    try:
+        artifact = read_layout_artifact(path)
+        validate_against_source(
+            artifact,
+            window.document.path,
+            start_page_id=window.document.start_page_id,
+            end_page_id=window.document.end_page_id,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"Invalid layout artifact for {window.document_stem}: {exc}") from exc
+
+    pages_by_idx = {page.page_idx: page for page in artifact.pages}
+    blocks_by_page: list[list[dict[str, Any]]] = []
+    page_sizes: list[list[int]] = []
+    for page_idx in range(window.start_page_id, window.end_page_id + 1):
+        page = pages_by_idx.get(page_idx)
+        if page is None:
+            raise RuntimeError(
+                f"Layout artifact for {window.document_stem} is missing page {page_idx}"
+            )
+        page_sizes.append(list(page.page_size))
+        blocks_by_page.append([
+            {
+                "type": block.type,
+                "bbox": block.bbox,
+                "angle": block.angle,
+                "merge_prev": block.merge_prev,
+            }
+            for block in sorted(page.blocks, key=lambda block: block.index)
+        ])
+
+    return {
+        "metadata": _window_metadata(window, page_sizes=page_sizes),
+        "blocks_by_page": blocks_by_page,
+        "elapsed_seconds": 0.0,
+    }
+
+
+def read_valid_layout_window_cache_or_artifact(
+    window: WindowJob,
+    *,
+    rehydrate: bool = False,
+) -> dict[str, Any] | None:
+    cache = read_valid_layout_window_cache(window)
+    if cache is not None:
+        return cache
+
+    cache = read_layout_window_cache_from_artifact(window)
+    if cache is None:
+        return None
+
+    if rehydrate:
+        write_layout_window_cache(
+            window,
+            blocks_by_page=cache["blocks_by_page"],
+            page_sizes=cache["metadata"].get("page_sizes", []),
+            elapsed_seconds=cache.get("elapsed_seconds", 0.0),
+        )
+    return cache
+
+
 def write_document_status(
     job: DocumentJob,
     *,
@@ -679,7 +751,7 @@ def write_document_layout_artifact(
         ),
         pages=pages,
     )
-    write_layout_artifact(artifact, job.parse_dir / f"{job.stem}_layout.json")
+    write_layout_artifact(artifact, document_layout_artifact_path(job))
 
 
 async def process_layout_window(
@@ -777,10 +849,10 @@ async def process_recognition_window(
             recorder.record_stage_started("recognition")
 
         try:
-            layout_cache = read_valid_layout_window_cache(window)
+            layout_cache = read_valid_layout_window_cache_or_artifact(window, rehydrate=True)
             if layout_cache is None:
                 raise RuntimeError(
-                    f"No valid layout cache for {window.document_stem} window {window.window_index}. "
+                    f"No valid layout cache or artifact for {window.document_stem} window {window.window_index}. "
                     "Run layout detection first."
                 )
 
@@ -922,10 +994,16 @@ async def run_document_ocr(
     document_starts = {index: time.monotonic() for index, _job in enumerate(jobs)}
 
     async def run_one(window: WindowJob) -> None:
-        # Skip if window cache already exists (for FULL/RECOGNIZE phases)
-        if options.phase in (OcrPhase.FULL, OcrPhase.RECOGNIZE):
-            if read_valid_window_cache(window) is not None:
+        recognition_cache = read_valid_window_cache(window)
+        if options.phase == OcrPhase.RECOGNIZE:
+            if recognition_cache is not None:
                 return
+        elif options.phase == OcrPhase.FULL and recognition_cache is not None:
+            try:
+                if read_valid_layout_window_cache_or_artifact(window, rehydrate=True) is not None:
+                    return
+            except RuntimeError:
+                pass
         # Skip if layout cache already exists (for LAYOUT phase)
         if options.phase == OcrPhase.LAYOUT:
             if read_valid_layout_window_cache(window) is not None:
@@ -934,8 +1012,16 @@ async def run_document_ocr(
             if window.document_index in failed_documents:
                 return
             try:
+                if (
+                    options.phase == OcrPhase.FULL
+                    and recognition_cache is not None
+                    and read_valid_layout_window_cache(window) is None
+                ):
+                    coro = process_layout_window(client, window, options)
+                else:
+                    coro = process_fn(client, window, options)
                 await asyncio.wait_for(
-                    process_fn(client, window, options),
+                    coro,
                     timeout=options.per_window_timeout,
                 )
             except asyncio.TimeoutError:

@@ -1,3 +1,4 @@
+import asyncio
 import json
 from pathlib import Path
 from PIL import Image
@@ -66,9 +67,6 @@ def test_layout_cache_write_and_read(tmp_path):
         stale_job, document_index=0, window_index=0, start_page_id=0, end_page_id=0,
     )
     assert document_ocr.read_valid_layout_window_cache(stale_window) is None
-
-
-import asyncio
 
 
 def test_process_layout_window_only_calls_layout(monkeypatch, tmp_path):
@@ -151,6 +149,44 @@ def test_process_recognition_window_uses_layout_cache(monkeypatch, tmp_path):
     cached = document_ocr.read_valid_window_cache(window)
     assert cached is not None
     assert cached["blocks_by_page"][0][0]["content"] == "recognized"
+
+
+def test_process_recognition_window_uses_layout_artifact_without_layout_cache(monkeypatch, tmp_path):
+    """Recognition accepts the document layout artifact as the phase boundary."""
+    image_path = tmp_path / "page.png"
+    _make_image(image_path)
+    job = document_ocr.DocumentJob.from_path(
+        image_path, "image", "page",
+        tmp_path / "out" / "page" / "vlm", 0, 1, 0, 0,
+    )
+    window = document_ocr.WindowJob.from_document(job, 0, 0, 0, 0)
+
+    document_ocr.write_layout_window_cache(
+        window,
+        blocks_by_page=[[{"type": "text", "bbox": [0, 0, 1, 1], "content": None}]],
+        page_sizes=[[16, 12]],
+        elapsed_seconds=0.1,
+    )
+    document_ocr.write_document_layout_artifact(job, [window])
+    document_ocr.layout_cache_path(window).unlink()
+
+    class FakeClient:
+        async def aio_recognize_from_layout(self, image, layout_blocks, **kwargs):
+            for block in layout_blocks:
+                block.content = "recognized-from-artifact"
+            return layout_blocks
+
+    options = document_ocr.DocumentOcrOptions(
+        input_path=tmp_path,
+        output_dir=tmp_path / "out",
+        phase=document_ocr.OcrPhase.RECOGNIZE,
+    )
+
+    asyncio.run(document_ocr.process_recognition_window(FakeClient(), window, options))
+
+    cached = document_ocr.read_valid_window_cache(window)
+    assert cached is not None
+    assert cached["blocks_by_page"][0][0]["content"] == "recognized-from-artifact"
 
 
 def test_process_full_window_calls_both_stages(monkeypatch, tmp_path):
@@ -292,3 +328,61 @@ def test_run_full_phase_writes_both_outputs(monkeypatch, tmp_path):
     assert (tmp_path / "out" / "doc" / "vlm" / "doc_layout.json").exists()
     assert (tmp_path / "out" / "doc" / "vlm" / "doc_model.json").exists()
     assert (tmp_path / "out" / "doc" / "vlm" / "doc.md").exists()
+
+
+def test_run_full_repairs_missing_layout_cache_when_recognition_cache_exists(monkeypatch, tmp_path):
+    """FULL reruns must not fail when old recognition caches lack layout caches."""
+    image_path = tmp_path / "doc.png"
+    _make_image(image_path)
+
+    job = document_ocr.DocumentJob.from_path(
+        image_path, "image", "doc",
+        tmp_path / "out" / "doc" / "vlm", 0, 1, 0, 0,
+    )
+    window = document_ocr.WindowJob.from_document(job, 0, 0, 0, 0)
+    document_ocr.write_window_cache(
+        window,
+        blocks_by_page=[[{"type": "text", "bbox": [0, 0, 1, 1], "content": "cached"}]],
+        page_sizes=[[16, 12]],
+        elapsed_seconds=0.2,
+    )
+
+    monkeypatch.setattr(document_ocr, "collect_document_jobs", lambda *a, **kw: [job])
+
+    layout_repairs = []
+
+    async def fake_process_layout_window(client, repair_window, options):
+        layout_repairs.append(repair_window.window_index)
+        document_ocr.write_layout_window_cache(
+            repair_window,
+            blocks_by_page=[[{"type": "text", "bbox": [0, 0, 1, 1]}]],
+            page_sizes=[[16, 12]],
+            elapsed_seconds=0.1,
+        )
+
+    async def fail_process_full_window(client, repair_window, options):
+        raise AssertionError("recognition cache should only need layout repair")
+
+    monkeypatch.setattr(document_ocr, "process_layout_window", fake_process_layout_window)
+    monkeypatch.setattr(document_ocr, "process_full_window", fail_process_full_window)
+    monkeypatch.setattr(
+        document_ocr,
+        "build_middle_json_for_document",
+        lambda doc, pages, sizes: {"pdf_info": [{"page_idx": 0}]},
+    )
+    monkeypatch.setattr(document_ocr, "render_outputs", lambda mj: ("cached", []))
+
+    options = document_ocr.DocumentOcrOptions(
+        input_path=tmp_path,
+        output_dir=tmp_path / "out",
+        phase=document_ocr.OcrPhase.FULL,
+        progress=False,
+    )
+    results = asyncio.run(
+        document_ocr.run_document_ocr(options, client_factory=lambda _o: object())
+    )
+
+    assert results[0].status == "completed"
+    assert layout_repairs == [0]
+    assert document_ocr.read_valid_layout_window_cache(window) is not None
+    assert (tmp_path / "out" / "doc" / "vlm" / "doc_layout.json").exists()
