@@ -509,16 +509,19 @@ async def process_image_job(
         with Image.open(job.path) as src_image:
             src_image.load()
             image = src_image.convert("RGB")
-        blocks_result = await asyncio.wait_for(
-            client.aio_two_step_extract(
-                image,
-                image_analysis=options.image_analysis,
-                dissection_recorder=recorder,
-                dissection_stream=options.stream,
-                page_idx=0,
-            ),
-            timeout=options.per_image_timeout,
-        )
+        try:
+            blocks_result = await asyncio.wait_for(
+                client.aio_two_step_extract(
+                    image,
+                    image_analysis=options.image_analysis,
+                    dissection_recorder=recorder,
+                    dissection_stream=options.stream,
+                    page_idx=0,
+                ),
+                timeout=options.per_image_timeout,
+            )
+        finally:
+            image.close()
         blocks = [dict(block) for block in blocks_result]
         if recorder is not None:
             recorder.record_stage_started("output_generation")
