@@ -7,6 +7,7 @@ import os
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -32,6 +33,12 @@ from mineru.utils.pdfium_guard import (
 
 PDF_SUFFIXES = {f".{suffix}" for suffix in pdf_suffixes}
 DOCUMENT_SUFFIXES = IMAGE_SUFFIXES | PDF_SUFFIXES
+
+
+class OcrPhase(Enum):
+    FULL = "full"
+    LAYOUT = "layout"
+    RECOGNIZE = "recognize"
 
 
 @dataclass(frozen=True)
@@ -114,6 +121,7 @@ class WindowJob:
 class DocumentOcrOptions:
     input_path: Path
     output_dir: Path
+    phase: OcrPhase = OcrPhase.FULL
     server_url: str | None = None
     layout_server_url: str | None = None
     recognition_server_url: str | None = None
@@ -361,6 +369,40 @@ def write_window_cache(
 
 def read_valid_window_cache(window: WindowJob) -> dict[str, Any] | None:
     path = window_cache_path(window)
+    if not path.exists():
+        return None
+    try:
+        cache = _read_json(path)
+    except Exception:
+        return None
+    metadata = cache.get("metadata")
+    if not isinstance(metadata, dict) or not _metadata_matches(window, metadata):
+        return None
+    return cache
+
+
+def layout_cache_path(window: WindowJob) -> Path:
+    return window.document.parse_dir / ".cache" / "layout" / f"window_{window.window_index:05d}.json"
+
+
+def write_layout_window_cache(
+    window: WindowJob,
+    blocks_by_page: list[list[dict[str, Any]]],
+    page_sizes: list[list[int]],
+    elapsed_seconds: float,
+) -> None:
+    _write_json(
+        layout_cache_path(window),
+        {
+            "metadata": _window_metadata(window, page_sizes=page_sizes),
+            "blocks_by_page": blocks_by_page,
+            "elapsed_seconds": round(elapsed_seconds, 3),
+        },
+    )
+
+
+def read_valid_layout_window_cache(window: WindowJob) -> dict[str, Any] | None:
+    path = layout_cache_path(window)
     if not path.exists():
         return None
     try:
