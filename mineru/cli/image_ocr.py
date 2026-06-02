@@ -13,17 +13,11 @@ from typing import Any, Awaitable, Callable, Iterable
 import click
 from PIL import Image
 
+from mineru.cli.common import image_suffixes
+
 
 IMAGE_SUFFIXES = {
-    ".bmp",
-    ".gif",
-    ".jpeg",
-    ".jpg",
-    ".jp2",
-    ".png",
-    ".tif",
-    ".tiff",
-    ".webp",
+    suffix if suffix.startswith(".") else f".{suffix}" for suffix in image_suffixes
 }
 
 
