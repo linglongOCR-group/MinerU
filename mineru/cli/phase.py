@@ -18,30 +18,37 @@ def _path_value(value):
     return value
 
 
-# --- Shared option decorators ---
+def _source_option(func):
+    return click.option(
+        "--source",
+        "input_path",
+        required=True,
+        type=click.Path(exists=True),
+        help="Document image, PDF, or directory.",
+    )(func)
 
 
-def _shared_options(func):
-    """Common options for all subcommands."""
-    func = click.option("-p", "--path", "input_path", required=True, type=click.Path(exists=True), help="Document image, PDF, or directory.")(func)
-    func = click.option("-o", "--output", "output_dir", required=True, type=click.Path(), help="Output directory.")(func)
-    func = click.option("-u", "--url", "server_url", default=None, help="Shared MinerU VLM server URL.")(func)
-    func = click.option("-r", "--resume", is_flag=True, help="Skip documents with completed status files.")(func)
-    func = click.option("--formula/--no-formula", "formula_enable", default=True, show_default=True, help="Render formula content.")(func)
-    func = click.option("--table/--no-table", "table_enable", default=True, show_default=True, help="Render table HTML content.")(func)
-    func = click.option("--image-analysis/--no-image-analysis", default=True, show_default=True, help="Recognize standalone image/chart blocks.")(func)
-    func = click.option("--page-window-size", default=4, show_default=True, type=int, help="PDF pages per scheduled window.")(func)
-    func = click.option("--max-windows", default=16, show_default=True, type=int, help="Maximum in-flight document windows.")(func)
-    func = click.option("--max-http-concurrency-per-window", default=1, show_default=True, type=int, help="Maximum in-flight VLM HTTP requests per window.")(func)
-    func = click.option("--per-window-timeout", default=600.0, show_default=True, type=float, help="Timeout per window in seconds.")(func)
-    func = click.option("--http-timeout", default=600, show_default=True, type=int, help="HTTP read timeout.")(func)
-    func = click.option("--connect-timeout", default=10, show_default=True, type=int, help="HTTP connect timeout.")(func)
-    func = click.option("--max-retries", default=3, show_default=True, type=int, help="HTTP retry count.")(func)
-    func = click.option("--retry-backoff-factor", default=0.5, show_default=True, type=float, help="HTTP retry backoff factor.")(func)
-    func = click.option("-s", "--start", "start_page_id", default=0, show_default=True, type=int, help="Starting PDF page, beginning from 0.")(func)
-    func = click.option("-e", "--end", "end_page_id", default=None, type=int, help="Ending PDF page, beginning from 0.")(func)
-    func = click.option("--progress/--no-progress", default=True, show_default=True, help="Show a progress bar.")(func)
-    return func
+def _output_option(func):
+    return click.option(
+        "--output",
+        "output_dir",
+        required=True,
+        type=click.Path(),
+        help="OCR output directory.",
+    )(func)
+
+
+def _layout_output_option(*, required: bool):
+    def decorator(func):
+        return click.option(
+            "--layout-output",
+            "layout_output_dir",
+            required=required,
+            type=click.Path(),
+            help="Layout artifact output directory.",
+        )(func)
+
+    return decorator
 
 
 def _layout_url_option(func):
@@ -60,6 +67,37 @@ def _layout_input_option(func):
         type=click.Path(exists=True),
         help="Layout artifact root, or one layout artifact JSON for a single source document.",
     )(func)
+
+
+def _execution_options(*, include_page_window_size: bool):
+    def decorator(func):
+        if include_page_window_size:
+            func = click.option("--page-window-size", default=4, show_default=True, type=int, help="PDF pages per scheduled window.")(func)
+        func = click.option("--max-windows", default=16, show_default=True, type=int, help="Maximum in-flight document windows.")(func)
+        func = click.option("--max-model-concurrency", "max_http_concurrency_per_window", default=1, show_default=True, type=int, help="Maximum in-flight VLM requests per window.")(func)
+        func = click.option("--timeout", "per_window_timeout", default=600.0, show_default=True, type=float, help="Timeout per window in seconds.")(func)
+        func = click.option("--http-timeout", default=600, show_default=True, type=int, help="HTTP read timeout.")(func)
+        func = click.option("--connect-timeout", default=10, show_default=True, type=int, help="HTTP connect timeout.")(func)
+        func = click.option("--max-retries", default=3, show_default=True, type=int, help="HTTP retry count.")(func)
+        func = click.option("--retry-backoff-factor", default=0.5, show_default=True, type=float, help="HTTP retry backoff factor.")(func)
+        func = click.option("-r", "--resume", is_flag=True, help="Skip documents with completed status files.")(func)
+        func = click.option("-s", "--start", "start_page_id", default=0, show_default=True, type=int, help="Starting PDF page, beginning from 0.")(func)
+        func = click.option("-e", "--end", "end_page_id", default=None, type=int, help="Ending PDF page, beginning from 0.")(func)
+        func = click.option("--progress/--no-progress", default=True, show_default=True, help="Show a progress bar.")(func)
+        return func
+
+    return decorator
+
+
+def _recognition_options(func):
+    func = click.option("--formula/--no-formula", "formula_enable", default=True, show_default=True, help="Render formula content.")(func)
+    func = click.option("--table/--no-table", "table_enable", default=True, show_default=True, help="Render table HTML content.")(func)
+    func = click.option("--image-analysis/--no-image-analysis", default=True, show_default=True, help="Recognize standalone image/chart blocks.")(func)
+    return func
+
+
+def _layout_dissection_option(func):
+    return click.option("--dissection/--no-dissection", "dissection_enable", default=False, show_default=True, help="Write VLM dissection artifacts.")(func)
 
 
 def _dissection_options(func):
@@ -86,6 +124,12 @@ def _build_options(phase, **kwargs):
     )
 
 
+def _build_layout_options(**kwargs):
+    layout_output_dir = kwargs["layout_output_dir"]
+    kwargs["output_dir"] = layout_output_dir
+    return _build_options(OcrPhase.LAYOUT, **kwargs)
+
+
 @click.group()
 def main():
     """Phase-aware VLM OCR pipeline."""
@@ -93,9 +137,13 @@ def main():
 
 
 @main.command()
-@_shared_options
+@_source_option
+@_output_option
+@_layout_output_option(required=False)
 @_layout_url_option
 @_recognition_url_option
+@_execution_options(include_page_window_size=True)
+@_recognition_options
 @_dissection_options
 def run(**kwargs):
     """Full OCR: layout -> recognition -> assemble."""
@@ -111,13 +159,14 @@ def run(**kwargs):
 
 
 @main.command()
-@_shared_options
+@_source_option
+@_layout_output_option(required=True)
 @_layout_url_option
-@click.option("--dissection/--no-dissection", "dissection_enable", default=False, show_default=True, help="Write VLM dissection artifacts.")
+@_execution_options(include_page_window_size=True)
+@_layout_dissection_option
 def layout(**kwargs):
     """Layout detection only. Outputs _layout.json per document."""
-    # layout subcommand does not have recognition url or stream
-    options = _build_options(OcrPhase.LAYOUT, **kwargs)
+    options = _build_layout_options(**kwargs)
     results = asyncio.run(run_document_ocr(options))
     completed = sum(r.status == "completed" for r in results)
     failed = len(results) - completed
@@ -127,9 +176,12 @@ def layout(**kwargs):
 
 
 @main.command()
-@_shared_options
+@_source_option
 @_layout_input_option
+@_output_option
 @_recognition_url_option
+@_execution_options(include_page_window_size=False)
+@_recognition_options
 @_dissection_options
 def recognize(**kwargs):
     """Recognition from existing layout artifact. Produces full OCR output."""
