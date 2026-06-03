@@ -437,6 +437,14 @@ def document_layout_artifact_path(job: DocumentJob, layout_root: Path | None = N
     return layout_root / job.stem / "vlm" / f"{job.stem}_layout.json"
 
 
+def resolve_layout_output_dir(options: DocumentOcrOptions) -> Path:
+    if options.layout_output_dir is not None:
+        return Path(options.layout_output_dir)
+    if options.phase == OcrPhase.FULL:
+        return options.output_dir / "_layout_artifacts"
+    return options.output_dir
+
+
 def _is_direct_layout_artifact(path: Path) -> bool:
     return path.is_file() or path.suffix.lower() == ".json"
 
@@ -734,6 +742,8 @@ async def process_window_job(client: Any, window: WindowJob, options: DocumentOc
 def write_document_layout_artifact(
     job: DocumentJob,
     windows: list[WindowJob],
+    *,
+    layout_output_dir: Path | None = None,
 ) -> None:
     """Collect layout window caches and write a document-level layout artifact."""
     from mineru.cli.layout_artifact import (
@@ -790,7 +800,9 @@ def write_document_layout_artifact(
         ),
         pages=pages,
     )
-    write_layout_artifact(artifact, document_layout_artifact_path(job))
+    artifact_path = document_layout_artifact_path(job, layout_output_dir)
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    write_layout_artifact(artifact, artifact_path)
 
 
 async def process_layout_window(
@@ -1128,7 +1140,11 @@ async def run_document_ocr(
         try:
             if options.phase == OcrPhase.LAYOUT:
                 # Layout-only: write layout artifact and status, no assembly
-                write_document_layout_artifact(job, document_windows)
+                write_document_layout_artifact(
+                    job,
+                    document_windows,
+                    layout_output_dir=resolve_layout_output_dir(options),
+                )
                 write_document_status(
                     job,
                     status="completed",
@@ -1154,7 +1170,11 @@ async def run_document_ocr(
                 )
                 # FULL also writes layout artifact for later re-runs
                 if options.phase == OcrPhase.FULL:
-                    write_document_layout_artifact(job, document_windows)
+                    write_document_layout_artifact(
+                        job,
+                        document_windows,
+                        layout_output_dir=resolve_layout_output_dir(options),
+                    )
         except Exception as exc:
             write_document_status(
                 job,

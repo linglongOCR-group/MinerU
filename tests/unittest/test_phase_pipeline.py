@@ -394,6 +394,68 @@ def test_run_layout_phase_writes_layout_artifact(monkeypatch, tmp_path):
     assert not (tmp_path / "out" / "doc" / "vlm" / "doc.md").exists()
 
 
+def test_layout_phase_writes_artifact_to_layout_output_dir(monkeypatch, tmp_path):
+    image_path = tmp_path / "doc.png"
+    _make_image(image_path)
+
+    async def fake_process_layout_window(client, window, options):
+        document_ocr.write_layout_window_cache(
+            window,
+            blocks_by_page=[[{"type": "text", "bbox": [0, 0, 1, 1]}]],
+            page_sizes=[[16, 12]],
+            elapsed_seconds=0.1,
+        )
+
+    monkeypatch.setattr(document_ocr, "process_layout_window", fake_process_layout_window)
+
+    options = document_ocr.DocumentOcrOptions(
+        input_path=image_path,
+        output_dir=tmp_path / "unused_layout_work",
+        phase=document_ocr.OcrPhase.LAYOUT,
+        layout_output_dir=tmp_path / "layout_artifacts",
+        progress=False,
+    )
+
+    results = asyncio.run(document_ocr.run_document_ocr(options, client_factory=lambda _opts: object()))
+
+    assert results[0].status == "completed"
+    assert (tmp_path / "layout_artifacts" / "doc" / "vlm" / "doc_layout.json").exists()
+    assert not (tmp_path / "unused_layout_work" / "doc" / "vlm" / "doc_layout.json").exists()
+
+
+def test_run_phase_writes_layout_artifact_to_default_nested_dir(monkeypatch, tmp_path):
+    image_path = tmp_path / "doc.png"
+    _make_image(image_path)
+
+    async def fake_process_full_window(client, window, options):
+        document_ocr.write_layout_window_cache(
+            window,
+            blocks_by_page=[[{"type": "text", "bbox": [0, 0, 1, 1]}]],
+            page_sizes=[[16, 12]],
+            elapsed_seconds=0.1,
+        )
+        document_ocr.write_window_cache(
+            window,
+            blocks_by_page=[[{"type": "text", "bbox": [0, 0, 1, 1], "content": "hello"}]],
+            page_sizes=[[16, 12]],
+            elapsed_seconds=0.1,
+        )
+
+    monkeypatch.setattr(document_ocr, "process_full_window", fake_process_full_window)
+
+    options = document_ocr.DocumentOcrOptions(
+        input_path=image_path,
+        output_dir=tmp_path / "full_out",
+        phase=document_ocr.OcrPhase.FULL,
+        progress=False,
+    )
+
+    results = asyncio.run(document_ocr.run_document_ocr(options, client_factory=lambda _opts: object()))
+
+    assert results[0].status == "completed"
+    assert (tmp_path / "full_out" / "_layout_artifacts" / "doc" / "vlm" / "doc_layout.json").exists()
+
+
 def test_run_full_phase_writes_both_outputs(monkeypatch, tmp_path):
     """Full phase produces layout artifact AND standard OCR outputs."""
     image_path = tmp_path / "doc.png"
@@ -443,7 +505,7 @@ def test_run_full_phase_writes_both_outputs(monkeypatch, tmp_path):
     )
 
     assert results[0].status == "completed"
-    assert (tmp_path / "out" / "doc" / "vlm" / "doc_layout.json").exists()
+    assert (tmp_path / "out" / "_layout_artifacts" / "doc" / "vlm" / "doc_layout.json").exists()
     assert (tmp_path / "out" / "doc" / "vlm" / "doc_model.json").exists()
     assert (tmp_path / "out" / "doc" / "vlm" / "doc.md").exists()
 
@@ -503,4 +565,4 @@ def test_run_full_repairs_missing_layout_cache_when_recognition_cache_exists(mon
     assert results[0].status == "completed"
     assert layout_repairs == [0]
     assert document_ocr.read_valid_layout_window_cache(window) is not None
-    assert (tmp_path / "out" / "doc" / "vlm" / "doc_layout.json").exists()
+    assert (tmp_path / "out" / "_layout_artifacts" / "doc" / "vlm" / "doc_layout.json").exists()
