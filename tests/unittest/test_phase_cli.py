@@ -84,6 +84,8 @@ def test_phase_recognize_does_not_accept_layout_url(tmp_path):
 def test_phase_recognize_parses_options(monkeypatch, tmp_path):
     image = tmp_path / "page.png"
     _make_image(image)
+    layout_input = tmp_path / "layout"
+    layout_input.mkdir()
     captured = {}
 
     async def fake_run(options):
@@ -94,6 +96,7 @@ def test_phase_recognize_parses_options(monkeypatch, tmp_path):
 
     result = CliRunner().invoke(phase.main, [
         "recognize", "-p", str(image), "-o", str(tmp_path / "out"),
+        "--layout-input", str(layout_input),
         "--recognition-url", "http://recognition",
     ])
 
@@ -101,6 +104,20 @@ def test_phase_recognize_parses_options(monkeypatch, tmp_path):
     assert captured["phase"].value == "recognize"
     assert captured["recognition_server_url"] == "http://recognition"
     assert captured["layout_server_url"] is None
+    assert captured["layout_input_path"] == layout_input
+
+
+def test_phase_recognize_requires_layout_input(tmp_path):
+    image = tmp_path / "page.png"
+    _make_image(image)
+
+    result = CliRunner().invoke(phase.main, [
+        "recognize", "-p", str(image), "-o", str(tmp_path / "out"),
+        "--recognition-url", "http://recognition",
+    ])
+
+    assert result.exit_code != 0
+    assert "Missing option '--layout-input'" in result.output
 
 
 def test_phase_rejects_stream_without_dissection(tmp_path):

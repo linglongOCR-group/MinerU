@@ -52,6 +52,16 @@ def _recognition_url_option(func):
     return click.option("--recognition-url", "recognition_server_url", default=None, help="Recognition stage server URL.")(func)
 
 
+def _layout_input_option(func):
+    return click.option(
+        "--layout-input",
+        "layout_input_path",
+        required=True,
+        type=click.Path(exists=True),
+        help="Layout artifact root, or one layout artifact JSON for a single source document.",
+    )(func)
+
+
 def _dissection_options(func):
     func = click.option("--dissection/--no-dissection", "dissection_enable", default=False, show_default=True, help="Write VLM dissection artifacts.")(func)
     func = click.option("--stream/--no-stream", "stream", default=False, show_default=True, help="Use streaming recognition.")(func)
@@ -118,6 +128,7 @@ def layout(**kwargs):
 
 @main.command()
 @_shared_options
+@_layout_input_option
 @_recognition_url_option
 @_dissection_options
 def recognize(**kwargs):
