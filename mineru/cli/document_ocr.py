@@ -476,11 +476,17 @@ def read_layout_window_cache_from_artifact(
 
     try:
         artifact = read_layout_artifact(path)
+        expected_page_sizes = None
+        if window.document.document_type == "image":
+            with Image.open(window.document.path) as image:
+                expected_page_sizes = [list(image.size)]
         validate_against_source(
             artifact,
             window.document.path,
             start_page_id=window.document.start_page_id,
             end_page_id=window.document.end_page_id,
+            page_count=window.document.page_count,
+            page_sizes=expected_page_sizes,
         )
     except Exception as exc:
         raise RuntimeError(f"Invalid layout artifact for {window.document_stem}: {exc}") from exc
@@ -1057,6 +1063,18 @@ async def run_document_ocr(
         recognition_cache = read_valid_window_cache(window)
         if options.phase == OcrPhase.RECOGNIZE:
             if recognition_cache is not None:
+                try:
+                    if read_valid_layout_window_cache_or_artifact(
+                        window,
+                        options=options,
+                        rehydrate=True,
+                    ) is None:
+                        raise RuntimeError(
+                            f"No valid layout cache or artifact for "
+                            f"{window.document_stem} window {window.window_index}"
+                        )
+                except RuntimeError as exc:
+                    failed_documents[window.document_index] = str(exc)
                 return
         elif options.phase == OcrPhase.FULL and recognition_cache is not None:
             try:

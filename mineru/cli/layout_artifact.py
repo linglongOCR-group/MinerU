@@ -225,14 +225,24 @@ def validate_against_source(
     *,
     start_page_id: int,
     end_page_id: int,
+    page_count: int | None = None,
+    page_sizes: list[list[int]] | None = None,
 ) -> None:
     """Validate that *artifact* still matches *source_path* on disk.
 
-    Checks file size, modification time, and page range.  Raises
+    Checks source identity, file metadata, page range, and optional page
+    metadata. Raises
     ``ValueError`` on any mismatch.
     """
     source_path = Path(source_path)
     stat = source_path.stat()
+    expected_path = str(source_path)
+
+    if artifact.source.path != expected_path:
+        raise ValueError(
+            f"Source path mismatch: artifact={artifact.source.path}, "
+            f"actual={expected_path}"
+        )
 
     if artifact.source.size != stat.st_size:
         raise ValueError(
@@ -251,3 +261,24 @@ def validate_against_source(
             f"Source page range mismatch: artifact=[{artifact.source.start_page_id}, "
             f"{artifact.source.end_page_id}], requested=[{start_page_id}, {end_page_id}]"
         )
+
+    if page_count is not None and artifact.source.page_count != page_count:
+        raise ValueError(
+            f"Source page count mismatch: artifact={artifact.source.page_count}, "
+            f"actual={page_count}"
+        )
+
+    if page_sizes is not None:
+        pages_by_idx = {page.page_idx: page for page in artifact.pages}
+        for offset, page_idx in enumerate(range(start_page_id, end_page_id + 1)):
+            if offset >= len(page_sizes):
+                raise ValueError(f"Source page size missing for requested page {page_idx}")
+            page = pages_by_idx.get(page_idx)
+            if page is None:
+                raise ValueError(f"Artifact page size missing for page {page_idx}")
+            expected_page_size = list(page_sizes[offset])
+            if list(page.page_size) != expected_page_size:
+                raise ValueError(
+                    f"Source page size mismatch for page {page_idx}: "
+                    f"artifact={page.page_size}, actual={expected_page_size}"
+                )

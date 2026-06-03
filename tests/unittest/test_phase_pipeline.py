@@ -568,6 +568,46 @@ def test_run_full_repairs_missing_layout_cache_when_recognition_cache_exists(mon
     assert (tmp_path / "out" / "_layout_artifacts" / "doc" / "vlm" / "doc_layout.json").exists()
 
 
+def test_recognize_with_cached_output_still_requires_layout_artifact(monkeypatch, tmp_path):
+    image_path = tmp_path / "doc.png"
+    _make_image(image_path)
+
+    rec_out = tmp_path / "rec_out"
+    job = document_ocr.DocumentJob.from_path(
+        image_path, "image", "doc",
+        rec_out / "doc" / "vlm", 0, 1, 0, 0,
+    )
+    window = document_ocr.WindowJob.from_document(job, 0, 0, 0, 0)
+    document_ocr.write_window_cache(
+        window,
+        blocks_by_page=[[{"type": "text", "bbox": [0, 0, 1, 1], "content": "cached"}]],
+        page_sizes=[[16, 12]],
+        elapsed_seconds=0.2,
+    )
+
+    monkeypatch.setattr(document_ocr, "collect_document_jobs", lambda *a, **kw: [job])
+
+    async def fail_process_recognition_window(client, repair_window, options):
+        raise AssertionError("recognition cache should skip recognition work")
+
+    monkeypatch.setattr(document_ocr, "process_recognition_window", fail_process_recognition_window)
+
+    options = document_ocr.DocumentOcrOptions(
+        input_path=image_path,
+        output_dir=rec_out,
+        phase=document_ocr.OcrPhase.RECOGNIZE,
+        layout_input_path=tmp_path / "missing_layout_root",
+        progress=False,
+    )
+    results = asyncio.run(
+        document_ocr.run_document_ocr(options, client_factory=lambda _opts: object())
+    )
+
+    assert results[0].status == "failed"
+    assert results[0].error is not None
+    assert "No valid layout cache or artifact" in results[0].error
+
+
 def test_run_full_rehydrates_layout_cache_from_default_layout_artifact(monkeypatch, tmp_path):
     image_path = tmp_path / "doc.png"
     _make_image(image_path)
