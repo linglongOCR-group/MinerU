@@ -460,6 +460,28 @@ def resolve_layout_artifact_path(job: DocumentJob, options: DocumentOcrOptions) 
     return document_layout_artifact_path(job)
 
 
+def _expected_source_page_sizes(window: WindowJob) -> list[list[int]]:
+    if window.document.document_type == "image":
+        with Image.open(window.document.path) as image:
+            return [list(image.size)]
+
+    pdf_bytes = window.document.path.read_bytes()
+    pdf_doc = open_pdfium_document(pdfium.PdfDocument, pdf_bytes)
+    images_list: list[dict[str, Any]] = []
+    try:
+        images_list = load_images_from_pdf_doc(
+            pdf_doc,
+            start_page_id=window.start_page_id,
+            end_page_id=window.end_page_id,
+            image_type=ImageType.PIL,
+            pdf_bytes=pdf_bytes,
+        )
+        return [list(image_dict["img_pil"].size) for image_dict in images_list]
+    finally:
+        _close_images(images_list)
+        close_pdfium_document(pdf_doc)
+
+
 def read_layout_window_cache_from_artifact(
     window: WindowJob,
     options: DocumentOcrOptions | None = None,
@@ -476,17 +498,13 @@ def read_layout_window_cache_from_artifact(
 
     try:
         artifact = read_layout_artifact(path)
-        expected_page_sizes = None
-        if window.document.document_type == "image":
-            with Image.open(window.document.path) as image:
-                expected_page_sizes = [list(image.size)]
         validate_against_source(
             artifact,
             window.document.path,
             start_page_id=window.document.start_page_id,
             end_page_id=window.document.end_page_id,
             page_count=window.document.page_count,
-            page_sizes=expected_page_sizes,
+            page_sizes=_expected_source_page_sizes(window),
         )
     except Exception as exc:
         raise RuntimeError(f"Invalid layout artifact for {window.document_stem}: {exc}") from exc
