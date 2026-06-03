@@ -417,12 +417,34 @@ def read_valid_layout_window_cache(window: WindowJob) -> dict[str, Any] | None:
     return cache
 
 
-def document_layout_artifact_path(job: DocumentJob) -> Path:
-    return job.parse_dir / f"{job.stem}_layout.json"
+def document_layout_artifact_path(job: DocumentJob, layout_root: Path | None = None) -> Path:
+    if layout_root is None:
+        return job.parse_dir / f"{job.stem}_layout.json"
+    return layout_root / job.stem / "vlm" / f"{job.stem}_layout.json"
 
 
-def read_layout_window_cache_from_artifact(window: WindowJob) -> dict[str, Any] | None:
-    path = document_layout_artifact_path(window.document)
+def _is_direct_layout_artifact(path: Path) -> bool:
+    return path.is_file() or path.suffix.lower() == ".json"
+
+
+def resolve_layout_artifact_path(job: DocumentJob, options: DocumentOcrOptions) -> Path:
+    if options.layout_input_path is not None:
+        layout_input_path = Path(options.layout_input_path)
+        if _is_direct_layout_artifact(layout_input_path):
+            return layout_input_path
+        return document_layout_artifact_path(job, layout_input_path)
+    return document_layout_artifact_path(job)
+
+
+def read_layout_window_cache_from_artifact(
+    window: WindowJob,
+    options: DocumentOcrOptions | None = None,
+) -> dict[str, Any] | None:
+    path = (
+        resolve_layout_artifact_path(window.document, options)
+        if options is not None
+        else document_layout_artifact_path(window.document)
+    )
     if not path.exists():
         return None
 
@@ -469,13 +491,14 @@ def read_layout_window_cache_from_artifact(window: WindowJob) -> dict[str, Any] 
 def read_valid_layout_window_cache_or_artifact(
     window: WindowJob,
     *,
+    options: DocumentOcrOptions | None = None,
     rehydrate: bool = False,
 ) -> dict[str, Any] | None:
     cache = read_valid_layout_window_cache(window)
     if cache is not None:
         return cache
 
-    cache = read_layout_window_cache_from_artifact(window)
+    cache = read_layout_window_cache_from_artifact(window, options)
     if cache is None:
         return None
 
@@ -851,7 +874,11 @@ async def process_recognition_window(
             recorder.record_stage_started("recognition")
 
         try:
-            layout_cache = read_valid_layout_window_cache_or_artifact(window, rehydrate=True)
+            layout_cache = read_valid_layout_window_cache_or_artifact(
+                window,
+                options=options,
+                rehydrate=True,
+            )
             if layout_cache is None:
                 raise RuntimeError(
                     f"No valid layout cache or artifact for {window.document_stem} window {window.window_index}. "
@@ -1002,7 +1029,11 @@ async def run_document_ocr(
                 return
         elif options.phase == OcrPhase.FULL and recognition_cache is not None:
             try:
-                if read_valid_layout_window_cache_or_artifact(window, rehydrate=True) is not None:
+                if read_valid_layout_window_cache_or_artifact(
+                    window,
+                    options=options,
+                    rehydrate=True,
+                ) is not None:
                     return
             except RuntimeError:
                 pass

@@ -215,6 +215,58 @@ def test_process_recognition_window_uses_layout_artifact_without_layout_cache(mo
     assert cached["blocks_by_page"][0][0]["content"] == "recognized-from-artifact"
 
 
+def test_layout_artifact_path_uses_layout_input_root(tmp_path):
+    image_path = tmp_path / "page.png"
+    _make_image(image_path)
+    job = document_ocr.DocumentJob.from_path(
+        image_path,
+        "image",
+        "page",
+        tmp_path / "recognition_out" / "page" / "vlm",
+        0,
+        1,
+        0,
+        0,
+    )
+    options = document_ocr.DocumentOcrOptions(
+        input_path=image_path,
+        output_dir=tmp_path / "recognition_out",
+        phase=document_ocr.OcrPhase.RECOGNIZE,
+        layout_input_path=tmp_path / "layout_root",
+    )
+
+    path = document_ocr.resolve_layout_artifact_path(job, options)
+
+    assert path == tmp_path / "layout_root" / "page" / "vlm" / "page_layout.json"
+
+
+def test_layout_artifact_path_accepts_direct_file_for_single_document(tmp_path):
+    image_path = tmp_path / "page.png"
+    _make_image(image_path)
+    artifact_path = tmp_path / "page_layout.json"
+    artifact_path.write_text("{}", encoding="utf-8")
+    job = document_ocr.DocumentJob.from_path(
+        image_path,
+        "image",
+        "page",
+        tmp_path / "recognition_out" / "page" / "vlm",
+        0,
+        1,
+        0,
+        0,
+    )
+    options = document_ocr.DocumentOcrOptions(
+        input_path=image_path,
+        output_dir=tmp_path / "recognition_out",
+        phase=document_ocr.OcrPhase.RECOGNIZE,
+        layout_input_path=artifact_path,
+    )
+
+    path = document_ocr.resolve_layout_artifact_path(job, options)
+
+    assert path == artifact_path
+
+
 def test_process_full_window_calls_both_stages(monkeypatch, tmp_path):
     """process_full_window calls layout then recognition, writing both caches."""
     image_path = tmp_path / "page.png"
