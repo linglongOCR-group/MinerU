@@ -646,6 +646,10 @@ def main(
     dissection_enable: bool,
     stream: bool,
 ) -> None:
+    click.echo(
+        "WARNING: mineru-ocr-images is deprecated. Use 'mineru-phase run' instead.",
+        err=True,
+    )
     if stream and not dissection_enable:
         raise click.ClickException("--stream requires --dissection")
     if max_http_concurrency_per_image < 1:

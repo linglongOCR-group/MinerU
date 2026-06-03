@@ -202,6 +202,12 @@ def test_run_document_ocr_continues_after_document_failure(monkeypatch, tmp_path
     async def fake_process_window(client, window, options):
         if window.document_stem == "bad":
             raise RuntimeError("bad window")
+        document_ocr.write_layout_window_cache(
+            window,
+            blocks_by_page=[[{"type": "text", "bbox": [0, 0, 1, 1]}]],
+            page_sizes=[[16, 12]],
+            elapsed_seconds=0.05,
+        )
         document_ocr.write_window_cache(
             window,
             blocks_by_page=[[{"content": "ok"}]],
@@ -210,6 +216,7 @@ def test_run_document_ocr_continues_after_document_failure(monkeypatch, tmp_path
         )
 
     monkeypatch.setattr(document_ocr, "process_window_job", fake_process_window)
+    monkeypatch.setattr(document_ocr, "process_full_window", fake_process_window)
     monkeypatch.setattr(
         document_ocr,
         "build_middle_json_for_document",
@@ -332,3 +339,26 @@ def test_cli_rejects_stream_without_dissection(tmp_path):
 
     assert result.exit_code != 0
     assert "--stream requires --dissection" in result.output
+
+
+def test_cli_prints_deprecation_notice(monkeypatch, tmp_path):
+    image = tmp_path / "page.png"
+    _make_image(image)
+
+    async def fake_run_document_ocr(options):
+        job = document_ocr.DocumentJob.from_path(
+            image, "image", "page",
+            tmp_path / "out" / "page" / "vlm", 0, 1, 0, 0,
+        )
+        return [document_ocr.DocumentJobResult(job=job, status="completed", elapsed_seconds=0.1)]
+
+    monkeypatch.setattr(document_ocr, "run_document_ocr", fake_run_document_ocr)
+
+    result = CliRunner().invoke(
+        document_ocr.main,
+        ["-p", str(image), "-o", str(tmp_path / "out")],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "deprecated" in result.output.lower()
+    assert "mineru-phase" in result.output.lower()

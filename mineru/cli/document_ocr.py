@@ -7,6 +7,7 @@ import os
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -32,6 +33,12 @@ from mineru.utils.pdfium_guard import (
 
 PDF_SUFFIXES = {f".{suffix}" for suffix in pdf_suffixes}
 DOCUMENT_SUFFIXES = IMAGE_SUFFIXES | PDF_SUFFIXES
+
+
+class OcrPhase(Enum):
+    FULL = "full"
+    LAYOUT = "layout"
+    RECOGNIZE = "recognize"
 
 
 @dataclass(frozen=True)
@@ -110,13 +117,16 @@ class WindowJob:
         return self.end_page_id - self.start_page_id + 1
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class DocumentOcrOptions:
     input_path: Path
     output_dir: Path
+    phase: OcrPhase = OcrPhase.FULL
     server_url: str | None = None
     layout_server_url: str | None = None
     recognition_server_url: str | None = None
+    layout_input_path: Path | None = None
+    layout_output_dir: Path | None = None
     resume: bool = False
     formula_enable: bool = True
     table_enable: bool = True
@@ -235,6 +245,19 @@ def _discover_documents(input_path: Path) -> list[Path]:
     )
 
 
+def validate_phase_options(options: DocumentOcrOptions, source_paths: list[Path]) -> None:
+    if options.phase == OcrPhase.RECOGNIZE:
+        if options.layout_input_path is None:
+            raise click.ClickException("--layout-input is required for recognize")
+        layout_input_path = Path(options.layout_input_path)
+        if _is_direct_layout_artifact(layout_input_path) and len(source_paths) != 1:
+            raise click.ClickException(
+                "direct --layout-input artifact can only be used with one source document"
+            )
+    if options.phase == OcrPhase.LAYOUT and options.layout_output_dir is None:
+        raise click.ClickException("--layout-output is required for layout")
+
+
 def _resolve_pdf_range(
     path: Path,
     page_count: int,
@@ -261,8 +284,9 @@ def collect_document_jobs(
     start_page_id: int,
     end_page_id: int | None,
     resume: bool = False,
+    source_paths: list[Path] | None = None,
 ) -> list[DocumentJob]:
-    paths = _discover_documents(input_path)
+    paths = source_paths if source_paths is not None else _discover_documents(input_path)
     if not paths:
         raise click.ClickException(f"No supported documents found under {input_path}")
 
@@ -370,6 +394,171 @@ def read_valid_window_cache(window: WindowJob) -> dict[str, Any] | None:
     metadata = cache.get("metadata")
     if not isinstance(metadata, dict) or not _metadata_matches(window, metadata):
         return None
+    return cache
+
+
+def layout_cache_path(window: WindowJob) -> Path:
+    return window.document.parse_dir / ".cache" / "layout" / f"window_{window.window_index:05d}.json"
+
+
+def write_layout_window_cache(
+    window: WindowJob,
+    blocks_by_page: list[list[dict[str, Any]]],
+    page_sizes: list[list[int]],
+    elapsed_seconds: float,
+) -> None:
+    _write_json(
+        layout_cache_path(window),
+        {
+            "metadata": _window_metadata(window, page_sizes=page_sizes),
+            "blocks_by_page": blocks_by_page,
+            "elapsed_seconds": round(elapsed_seconds, 3),
+        },
+    )
+
+
+def read_valid_layout_window_cache(window: WindowJob) -> dict[str, Any] | None:
+    path = layout_cache_path(window)
+    if not path.exists():
+        return None
+    try:
+        cache = _read_json(path)
+    except Exception:
+        return None
+    metadata = cache.get("metadata")
+    if not isinstance(metadata, dict) or not _metadata_matches(window, metadata):
+        return None
+    return cache
+
+
+def document_layout_artifact_path(job: DocumentJob, layout_root: Path | None = None) -> Path:
+    if layout_root is None:
+        return job.parse_dir / f"{job.stem}_layout.json"
+    return layout_root / job.stem / "vlm" / f"{job.stem}_layout.json"
+
+
+def resolve_layout_output_dir(options: DocumentOcrOptions) -> Path:
+    if options.layout_output_dir is not None:
+        return Path(options.layout_output_dir)
+    if options.phase == OcrPhase.FULL:
+        return options.output_dir / "_layout_artifacts"
+    return options.output_dir
+
+
+def _is_direct_layout_artifact(path: Path) -> bool:
+    return path.is_file() or (path.suffix.lower() == ".json" and not path.is_dir())
+
+
+def resolve_layout_artifact_path(job: DocumentJob, options: DocumentOcrOptions) -> Path:
+    if options.layout_input_path is not None:
+        layout_input_path = Path(options.layout_input_path)
+        if _is_direct_layout_artifact(layout_input_path):
+            return layout_input_path
+        return document_layout_artifact_path(job, layout_input_path)
+    if options.phase == OcrPhase.FULL:
+        return document_layout_artifact_path(job, resolve_layout_output_dir(options))
+    return document_layout_artifact_path(job)
+
+
+def _expected_source_page_sizes(window: WindowJob) -> list[list[int]]:
+    if window.document.document_type == "image":
+        with Image.open(window.document.path) as image:
+            return [list(image.size)]
+
+    pdf_bytes = window.document.path.read_bytes()
+    pdf_doc = open_pdfium_document(pdfium.PdfDocument, pdf_bytes)
+    images_list: list[dict[str, Any]] = []
+    try:
+        images_list = load_images_from_pdf_doc(
+            pdf_doc,
+            start_page_id=window.start_page_id,
+            end_page_id=window.end_page_id,
+            image_type=ImageType.PIL,
+            pdf_bytes=pdf_bytes,
+        )
+        return [list(image_dict["img_pil"].size) for image_dict in images_list]
+    finally:
+        _close_images(images_list)
+        close_pdfium_document(pdf_doc)
+
+
+def read_layout_window_cache_from_artifact(
+    window: WindowJob,
+    options: DocumentOcrOptions | None = None,
+) -> dict[str, Any] | None:
+    path = (
+        resolve_layout_artifact_path(window.document, options)
+        if options is not None
+        else document_layout_artifact_path(window.document)
+    )
+    if not path.exists():
+        return None
+
+    from mineru.cli.layout_artifact import read_layout_artifact, validate_against_source
+
+    try:
+        artifact = read_layout_artifact(path)
+        validate_against_source(
+            artifact,
+            window.document.path,
+            start_page_id=window.document.start_page_id,
+            end_page_id=window.document.end_page_id,
+            page_count=window.document.page_count,
+            page_sizes=_expected_source_page_sizes(window),
+            page_sizes_start_page_id=window.start_page_id,
+            page_sizes_end_page_id=window.end_page_id,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"Invalid layout artifact for {window.document_stem}: {exc}") from exc
+
+    pages_by_idx = {page.page_idx: page for page in artifact.pages}
+    blocks_by_page: list[list[dict[str, Any]]] = []
+    page_sizes: list[list[int]] = []
+    for page_idx in range(window.start_page_id, window.end_page_id + 1):
+        page = pages_by_idx.get(page_idx)
+        if page is None:
+            raise RuntimeError(
+                f"Layout artifact for {window.document_stem} is missing page {page_idx}"
+            )
+        page_sizes.append(list(page.page_size))
+        blocks_by_page.append([
+            {
+                "type": block.type,
+                "bbox": block.bbox,
+                "angle": block.angle,
+                "merge_prev": block.merge_prev,
+            }
+            for block in sorted(page.blocks, key=lambda block: block.index)
+        ])
+
+    return {
+        "metadata": _window_metadata(window, page_sizes=page_sizes),
+        "blocks_by_page": blocks_by_page,
+        "elapsed_seconds": 0.0,
+    }
+
+
+def read_valid_layout_window_cache_or_artifact(
+    window: WindowJob,
+    *,
+    options: DocumentOcrOptions | None = None,
+    rehydrate: bool = False,
+) -> dict[str, Any] | None:
+    cache = read_valid_layout_window_cache(window)
+    if cache is not None:
+        return cache
+
+    cache = read_layout_window_cache_from_artifact(window, options)
+    if cache is None:
+        return None
+
+    if rehydrate:
+        write_layout_window_cache(
+            window,
+            blocks_by_page=cache["blocks_by_page"],
+            page_sizes=cache["metadata"].get("page_sizes", []),
+            elapsed_seconds=cache.get("elapsed_seconds", 0.0),
+        )
     return cache
 
 
@@ -578,6 +767,262 @@ async def process_window_job(client: Any, window: WindowJob, options: DocumentOc
             recorder.finalize()
 
 
+def write_document_layout_artifact(
+    job: DocumentJob,
+    windows: list[WindowJob],
+    *,
+    layout_output_dir: Path | None = None,
+) -> None:
+    """Collect layout window caches and write a document-level layout artifact."""
+    from mineru.cli.layout_artifact import (
+        LayoutArtifact, LayoutBlock, LayoutMeta, LayoutPage, LayoutSource,
+        write_layout_artifact,
+    )
+
+    pages = []
+    for window in sorted(windows, key=lambda w: w.window_index):
+        cache = read_valid_layout_window_cache(window)
+        if cache is None:
+            raise RuntimeError(
+                f"Missing valid layout cache for {job.stem} window {window.window_index}"
+            )
+        page_sizes = cache["metadata"].get("page_sizes", [])
+        for page_idx_in_window, (page_blocks, page_size) in enumerate(
+            zip(cache["blocks_by_page"], page_sizes)
+        ):
+            global_page_idx = window.start_page_id + page_idx_in_window
+            blocks = [
+                LayoutBlock(
+                    id=f"p{global_page_idx:04d}-b{block_idx:06d}",
+                    index=block_idx,
+                    type=block.get("type", "text"),
+                    bbox=block.get("bbox", [0, 0, 1, 1]),
+                    angle=block.get("angle", 0),
+                    merge_prev=block.get("merge_prev", False),
+                )
+                for block_idx, block in enumerate(page_blocks)
+            ]
+            pages.append(LayoutPage(
+                page_idx=global_page_idx,
+                page_size=page_size,
+                blocks=blocks,
+            ))
+
+    stat = job.path.stat()
+    artifact = LayoutArtifact(
+        schema="mineru.vlm.layout.v1",
+        stage="layout",
+        backend="vlm",
+        source=LayoutSource(
+            path=str(job.path),
+            type=job.document_type,
+            size=stat.st_size,
+            mtime=stat.st_mtime,
+            page_count=job.page_count,
+            start_page_id=job.start_page_id,
+            end_page_id=job.end_page_id,
+        ),
+        layout=LayoutMeta(
+            model="vlm",
+            layout_image_size=(1036, 1036),
+        ),
+        pages=pages,
+    )
+    artifact_path = document_layout_artifact_path(job, layout_output_dir)
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    write_layout_artifact(artifact, artifact_path)
+
+
+async def process_layout_window(
+    client: Any,
+    window: WindowJob,
+    options: DocumentOcrOptions,
+) -> None:
+    """Run layout detection only for a window. Writes layout cache."""
+    start = time.monotonic()
+    recorder = None
+    try:
+        if options.dissection_enable:
+            from mineru_vl_utils.dissection import DissectionRecorder
+
+            recorder = DissectionRecorder(
+                window.document.parse_dir / "dissection" / "layout" / f"window_{window.window_index:05d}",
+                document_stem=window.document_stem,
+            )
+        if recorder is not None:
+            recorder.record_pipeline_started()
+            recorder.record_stage_started("layout_detection")
+
+        try:
+            if window.document.document_type == "image":
+                with Image.open(window.document.path) as src_image:
+                    src_image.load()
+                    image = src_image.convert("RGB")
+                try:
+                    layout_result = await client.aio_layout_detect(image)
+                    write_layout_window_cache(
+                        window,
+                        blocks_by_page=[[dict(block) for block in layout_result]],
+                        page_sizes=[list(image.size)],
+                        elapsed_seconds=time.monotonic() - start,
+                    )
+                finally:
+                    image.close()
+            else:
+                # PDF window — batch layout detect
+                pdf_bytes = window.document.path.read_bytes()
+                images_list = await aio_load_images_from_pdf_bytes_range(
+                    pdf_bytes,
+                    start_page_id=window.start_page_id,
+                    end_page_id=window.end_page_id,
+                    image_type=ImageType.PIL,
+                )
+                try:
+                    images = [d["img_pil"] for d in images_list]
+                    layout_results = await client.aio_batch_layout_detect(images)
+                    write_layout_window_cache(
+                        window,
+                        blocks_by_page=[
+                            [dict(block) for block in page_blocks]
+                            for page_blocks in layout_results
+                        ],
+                        page_sizes=[list(img.size) for img in images],
+                        elapsed_seconds=time.monotonic() - start,
+                    )
+                finally:
+                    _close_images(images_list)
+
+            if recorder is not None:
+                recorder.record_stage_finished("layout_detection")
+                recorder.record_pipeline_finished("completed")
+        except Exception as exc:
+            if recorder is not None:
+                recorder.record_stage_finished("layout_detection", "failed", exc)
+                recorder.record_pipeline_finished("failed", exc)
+            raise
+    finally:
+        if recorder is not None:
+            recorder.finalize()
+
+
+async def process_recognition_window(
+    client: Any,
+    window: WindowJob,
+    options: DocumentOcrOptions,
+) -> None:
+    """Run recognition from layout cache for a window. Writes window cache."""
+    from mineru_vl_utils.structs import ContentBlock, ExtractResult
+
+    start = time.monotonic()
+    recorder = None
+    try:
+        if options.dissection_enable:
+            from mineru_vl_utils.dissection import DissectionRecorder
+
+            recorder = DissectionRecorder(
+                window.document.parse_dir / "dissection" / "recognition" / f"window_{window.window_index:05d}",
+                document_stem=window.document_stem,
+            )
+        if recorder is not None:
+            recorder.record_pipeline_started()
+            recorder.record_stage_started("recognition")
+
+        try:
+            layout_cache = read_valid_layout_window_cache_or_artifact(
+                window,
+                options=options,
+                rehydrate=True,
+            )
+            if layout_cache is None:
+                raise RuntimeError(
+                    f"No valid layout cache or artifact for {window.document_stem} window {window.window_index}. "
+                    "Run layout detection first."
+                )
+
+            cached_blocks_by_page = layout_cache["blocks_by_page"]
+            page_sizes = layout_cache["metadata"].get("page_sizes", [])
+
+            if window.document.document_type == "image":
+                with Image.open(window.document.path) as src_image:
+                    src_image.load()
+                    image = src_image.convert("RGB")
+                try:
+                    layout_blocks = ExtractResult([
+                        ContentBlock(
+                            b.get("type", "text"),
+                            b.get("bbox", [0, 0, 1, 1]),
+                            angle=b.get("angle", 0),
+                            merge_prev=b.get("merge_prev", False),
+                        )
+                        for b in cached_blocks_by_page[0]
+                    ])
+                    result = await client.aio_recognize_from_layout(image, layout_blocks)
+                    write_window_cache(
+                        window,
+                        blocks_by_page=[[dict(block) for block in result]],
+                        page_sizes=[list(image.size)],
+                        elapsed_seconds=time.monotonic() - start,
+                    )
+                finally:
+                    image.close()
+            else:
+                # PDF window — batch recognition from layout
+                pdf_bytes = window.document.path.read_bytes()
+                images_list = await aio_load_images_from_pdf_bytes_range(
+                    pdf_bytes,
+                    start_page_id=window.start_page_id,
+                    end_page_id=window.end_page_id,
+                    image_type=ImageType.PIL,
+                )
+                try:
+                    images = [d["img_pil"] for d in images_list]
+                    layout_blocks_by_page = []
+                    for page_blocks in cached_blocks_by_page:
+                        layout_blocks_by_page.append(ExtractResult([
+                            ContentBlock(
+                                b.get("type", "text"),
+                                b.get("bbox", [0, 0, 1, 1]),
+                                angle=b.get("angle", 0),
+                                merge_prev=b.get("merge_prev", False),
+                            )
+                            for b in page_blocks
+                        ]))
+                    results = await client.aio_batch_recognize_from_layout(images, layout_blocks_by_page)
+                    write_window_cache(
+                        window,
+                        blocks_by_page=[
+                            [dict(block) for block in page_blocks]
+                            for page_blocks in results
+                        ],
+                        page_sizes=[list(img.size) for img in images],
+                        elapsed_seconds=time.monotonic() - start,
+                    )
+                finally:
+                    _close_images(images_list)
+
+            if recorder is not None:
+                recorder.record_stage_finished("recognition")
+                recorder.record_pipeline_finished("completed")
+        except Exception as exc:
+            if recorder is not None:
+                recorder.record_stage_finished("recognition", "failed", exc)
+                recorder.record_pipeline_finished("failed", exc)
+            raise
+    finally:
+        if recorder is not None:
+            recorder.finalize()
+
+
+async def process_full_window(
+    client: Any,
+    window: WindowJob,
+    options: DocumentOcrOptions,
+) -> None:
+    """Full pipeline: layout then recognition. Writes both caches."""
+    await process_layout_window(client, window, options)
+    await process_recognition_window(client, window, options)
+
+
 @contextmanager
 def _temporary_env(updates: dict[str, str]):
     original = {key: os.environ.get(key) for key in updates}
@@ -602,12 +1047,15 @@ async def run_document_ocr(
         raise click.ClickException("--max-windows must be at least 1")
     if options.max_http_concurrency_per_window < 1:
         raise click.ClickException("--max-http-concurrency-per-window must be at least 1")
+    source_paths = _discover_documents(options.input_path)
+    validate_phase_options(options, source_paths)
     jobs = collect_document_jobs(
         options.input_path,
         options.output_dir,
         start_page_id=options.start_page_id,
         end_page_id=options.end_page_id,
         resume=options.resume,
+        source_paths=source_paths,
     )
     if not jobs:
         return []
@@ -616,20 +1064,70 @@ async def run_document_ocr(
     for window in windows:
         windows_by_document.setdefault(window.document_index, []).append(window)
 
+    # Choose processing function based on phase
+    if options.phase == OcrPhase.FULL:
+        process_fn = process_full_window
+    elif options.phase == OcrPhase.LAYOUT:
+        process_fn = process_layout_window
+    elif options.phase == OcrPhase.RECOGNIZE:
+        process_fn = process_recognition_window
+    else:
+        raise ValueError(f"Unknown phase: {options.phase}")
+
     client = client_factory(options)
     semaphore = asyncio.Semaphore(options.max_windows)
     failed_documents: dict[int, str] = {}
     document_starts = {index: time.monotonic() for index, _job in enumerate(jobs)}
 
     async def run_one(window: WindowJob) -> None:
-        if read_valid_window_cache(window) is not None:
-            return
+        recognition_cache = read_valid_window_cache(window)
+        if options.phase == OcrPhase.RECOGNIZE:
+            if recognition_cache is not None:
+                try:
+                    if options.layout_input_path is not None:
+                        layout_cache = read_layout_window_cache_from_artifact(window, options)
+                    else:
+                        layout_cache = read_valid_layout_window_cache_or_artifact(
+                            window,
+                            options=options,
+                            rehydrate=True,
+                        )
+                    if layout_cache is None:
+                        raise RuntimeError(
+                            f"No valid layout cache or artifact for "
+                            f"{window.document_stem} window {window.window_index}"
+                        )
+                except RuntimeError as exc:
+                    failed_documents[window.document_index] = str(exc)
+                return
+        elif options.phase == OcrPhase.FULL and recognition_cache is not None:
+            try:
+                if read_valid_layout_window_cache_or_artifact(
+                    window,
+                    options=options,
+                    rehydrate=True,
+                ) is not None:
+                    return
+            except RuntimeError:
+                pass
+        # Skip if layout cache already exists (for LAYOUT phase)
+        if options.phase == OcrPhase.LAYOUT:
+            if read_valid_layout_window_cache(window) is not None:
+                return
         async with semaphore:
             if window.document_index in failed_documents:
                 return
             try:
+                if (
+                    options.phase == OcrPhase.FULL
+                    and recognition_cache is not None
+                    and read_valid_layout_window_cache(window) is None
+                ):
+                    coro = process_layout_window(client, window, options)
+                else:
+                    coro = process_fn(client, window, options)
                 await asyncio.wait_for(
-                    process_window_job(client, window, options),
+                    coro,
                     timeout=options.per_window_timeout,
                 )
             except asyncio.TimeoutError:
@@ -684,13 +1182,43 @@ async def run_document_ocr(
             )
             continue
         try:
-            results.append(
-                assemble_document_outputs(
+            if options.phase == OcrPhase.LAYOUT:
+                # Layout-only: write layout artifact and status, no assembly
+                write_document_layout_artifact(
                     job,
                     document_windows,
-                    elapsed_seconds=elapsed,
+                    layout_output_dir=resolve_layout_output_dir(options),
                 )
-            )
+                write_document_status(
+                    job,
+                    status="completed",
+                    elapsed_seconds=elapsed,
+                    completed_windows=len(document_windows),
+                    total_windows=len(document_windows),
+                )
+                results.append(
+                    DocumentJobResult(
+                        job=job,
+                        status="completed",
+                        elapsed_seconds=round(elapsed, 3),
+                    )
+                )
+            else:
+                # FULL or RECOGNIZE: assemble standard outputs
+                results.append(
+                    assemble_document_outputs(
+                        job,
+                        document_windows,
+                        elapsed_seconds=elapsed,
+                    )
+                )
+                # FULL also writes layout artifact for later re-runs
+                if options.phase == OcrPhase.FULL:
+                    write_document_layout_artifact(
+                        job,
+                        document_windows,
+                        layout_output_dir=resolve_layout_output_dir(options),
+                    )
         except Exception as exc:
             write_document_status(
                 job,
@@ -758,6 +1286,10 @@ def main(
     dissection_enable: bool,
     stream: bool,
 ) -> None:
+    click.echo(
+        "WARNING: mineru-ocr-documents is deprecated. Use 'mineru-phase run' instead.",
+        err=True,
+    )
     options = DocumentOcrOptions(
         input_path=input_path,
         output_dir=output_dir,
