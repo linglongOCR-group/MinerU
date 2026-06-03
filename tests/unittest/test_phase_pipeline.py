@@ -566,3 +566,56 @@ def test_run_full_repairs_missing_layout_cache_when_recognition_cache_exists(mon
     assert layout_repairs == [0]
     assert document_ocr.read_valid_layout_window_cache(window) is not None
     assert (tmp_path / "out" / "_layout_artifacts" / "doc" / "vlm" / "doc_layout.json").exists()
+
+
+def test_run_full_rehydrates_layout_cache_from_default_layout_artifact(monkeypatch, tmp_path):
+    image_path = tmp_path / "doc.png"
+    _make_image(image_path)
+
+    job = document_ocr.DocumentJob.from_path(
+        image_path, "image", "doc",
+        tmp_path / "out" / "doc" / "vlm", 0, 1, 0, 0,
+    )
+    window = document_ocr.WindowJob.from_document(job, 0, 0, 0, 0)
+    document_ocr.write_layout_window_cache(
+        window,
+        blocks_by_page=[[{"type": "text", "bbox": [0, 0, 1, 1]}]],
+        page_sizes=[[16, 12]],
+        elapsed_seconds=0.1,
+    )
+    document_ocr.write_document_layout_artifact(
+        job,
+        [window],
+        layout_output_dir=tmp_path / "out" / "_layout_artifacts",
+    )
+    document_ocr.write_window_cache(
+        window,
+        blocks_by_page=[[{"type": "text", "bbox": [0, 0, 1, 1], "content": "cached"}]],
+        page_sizes=[[16, 12]],
+        elapsed_seconds=0.2,
+    )
+    document_ocr.layout_cache_path(window).unlink()
+
+    async def fail_process_layout_window(client, repair_window, options):
+        raise AssertionError("layout should not run")
+
+    monkeypatch.setattr(document_ocr, "process_layout_window", fail_process_layout_window)
+    monkeypatch.setattr(
+        document_ocr,
+        "build_middle_json_for_document",
+        lambda doc, pages, sizes: {"pdf_info": [{"page_idx": 0}]},
+    )
+    monkeypatch.setattr(document_ocr, "render_outputs", lambda mj: ("cached", []))
+
+    options = document_ocr.DocumentOcrOptions(
+        input_path=image_path,
+        output_dir=tmp_path / "out",
+        phase=document_ocr.OcrPhase.FULL,
+        progress=False,
+    )
+    results = asyncio.run(
+        document_ocr.run_document_ocr(options, client_factory=lambda _opts: object())
+    )
+
+    assert results[0].status == "completed"
+    assert document_ocr.read_valid_layout_window_cache(window) is not None

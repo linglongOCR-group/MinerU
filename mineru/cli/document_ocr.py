@@ -455,6 +455,8 @@ def resolve_layout_artifact_path(job: DocumentJob, options: DocumentOcrOptions) 
         if _is_direct_layout_artifact(layout_input_path):
             return layout_input_path
         return document_layout_artifact_path(job, layout_input_path)
+    if options.phase == OcrPhase.FULL:
+        return document_layout_artifact_path(job, resolve_layout_output_dir(options))
     return document_layout_artifact_path(job)
 
 
