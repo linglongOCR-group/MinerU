@@ -26,6 +26,23 @@ def test_document_ocr_options_has_phase_field():
     assert opts.phase == document_ocr.OcrPhase.LAYOUT
 
 
+def test_document_ocr_options_accept_explicit_layout_paths(tmp_path):
+    opts = document_ocr.DocumentOcrOptions(
+        input_path=tmp_path / "input",
+        output_dir=tmp_path / "recognition_out",
+        phase=document_ocr.OcrPhase.RECOGNIZE,
+        layout_input_path=tmp_path / "layout_in",
+        layout_output_dir=tmp_path / "layout_out",
+        max_http_concurrency_per_window=3,
+        per_window_timeout=42.0,
+    )
+
+    assert opts.layout_input_path == tmp_path / "layout_in"
+    assert opts.layout_output_dir == tmp_path / "layout_out"
+    assert opts.max_http_concurrency_per_window == 3
+    assert opts.per_window_timeout == 42.0
+
+
 def test_document_ocr_options_phase_defaults_to_full():
     opts = document_ocr.DocumentOcrOptions(
         input_path=Path("/tmp/in"),

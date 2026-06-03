@@ -125,6 +125,8 @@ class DocumentOcrOptions:
     server_url: str | None = None
     layout_server_url: str | None = None
     recognition_server_url: str | None = None
+    layout_input_path: Path | None = None
+    layout_output_dir: Path | None = None
     resume: bool = False
     formula_enable: bool = True
     table_enable: bool = True
