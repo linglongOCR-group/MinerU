@@ -66,6 +66,7 @@ def test_phase_layout_parses_options(monkeypatch, tmp_path):
     assert captured["phase"].value == "layout"
     assert captured["layout_server_url"] == "http://layout"
     assert captured["recognition_server_url"] is None
+    assert captured["layout_output_dir"] == tmp_path / "out"
 
 
 def test_phase_recognize_does_not_accept_layout_url(tmp_path):

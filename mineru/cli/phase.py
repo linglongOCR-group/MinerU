@@ -62,10 +62,16 @@ def _build_options(phase, **kwargs):
     """Build DocumentOcrOptions from CLI kwargs."""
     input_path = _path_value(kwargs.pop("input_path"))
     output_dir = _path_value(kwargs.pop("output_dir"))
+    layout_input_path = _path_value(kwargs.pop("layout_input_path", None))
+    layout_output_dir = _path_value(kwargs.pop("layout_output_dir", None))
+    if phase == OcrPhase.LAYOUT and layout_output_dir is None:
+        layout_output_dir = output_dir
     return DocumentOcrOptions(
         input_path=input_path,
         output_dir=output_dir,
         phase=phase,
+        layout_input_path=layout_input_path,
+        layout_output_dir=layout_output_dir,
         **kwargs,
     )
 
