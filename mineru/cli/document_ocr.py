@@ -1064,11 +1064,15 @@ async def run_document_ocr(
         if options.phase == OcrPhase.RECOGNIZE:
             if recognition_cache is not None:
                 try:
-                    if read_valid_layout_window_cache_or_artifact(
-                        window,
-                        options=options,
-                        rehydrate=True,
-                    ) is None:
+                    if options.layout_input_path is not None:
+                        layout_cache = read_layout_window_cache_from_artifact(window, options)
+                    else:
+                        layout_cache = read_valid_layout_window_cache_or_artifact(
+                            window,
+                            options=options,
+                            rehydrate=True,
+                        )
+                    if layout_cache is None:
                         raise RuntimeError(
                             f"No valid layout cache or artifact for "
                             f"{window.document_stem} window {window.window_index}"
