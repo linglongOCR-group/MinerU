@@ -267,6 +267,45 @@ def test_layout_artifact_path_accepts_direct_file_for_single_document(tmp_path):
     assert path == artifact_path
 
 
+def test_recognize_requires_layout_input_path(tmp_path):
+    image_path = tmp_path / "page.png"
+    _make_image(image_path)
+    options = document_ocr.DocumentOcrOptions(
+        input_path=image_path,
+        output_dir=tmp_path / "recognition_out",
+        phase=document_ocr.OcrPhase.RECOGNIZE,
+    )
+
+    try:
+        document_ocr.validate_phase_options(options, [image_path])
+    except Exception as exc:
+        assert "--layout-input is required for recognize" in str(exc)
+    else:
+        raise AssertionError("Expected recognize without layout_input_path to fail")
+
+
+def test_direct_layout_artifact_rejects_multiple_documents(tmp_path):
+    image_a = tmp_path / "a.png"
+    image_b = tmp_path / "b.png"
+    _make_image(image_a)
+    _make_image(image_b)
+    artifact_path = tmp_path / "layout.json"
+    artifact_path.write_text("{}", encoding="utf-8")
+    options = document_ocr.DocumentOcrOptions(
+        input_path=tmp_path,
+        output_dir=tmp_path / "recognition_out",
+        phase=document_ocr.OcrPhase.RECOGNIZE,
+        layout_input_path=artifact_path,
+    )
+
+    try:
+        document_ocr.validate_phase_options(options, [image_a, image_b])
+    except Exception as exc:
+        assert "direct --layout-input artifact can only be used with one source document" in str(exc)
+    else:
+        raise AssertionError("Expected direct layout artifact with multiple documents to fail")
+
+
 def test_process_full_window_calls_both_stages(monkeypatch, tmp_path):
     """process_full_window calls layout then recognition, writing both caches."""
     image_path = tmp_path / "page.png"
@@ -341,6 +380,7 @@ def test_run_layout_phase_writes_layout_artifact(monkeypatch, tmp_path):
         input_path=tmp_path,
         output_dir=tmp_path / "out",
         phase=document_ocr.OcrPhase.LAYOUT,
+        layout_output_dir=tmp_path / "out",
         progress=False,
     )
     results = asyncio.run(

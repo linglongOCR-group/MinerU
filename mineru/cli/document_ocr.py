@@ -245,6 +245,19 @@ def _discover_documents(input_path: Path) -> list[Path]:
     )
 
 
+def validate_phase_options(options: DocumentOcrOptions, source_paths: list[Path]) -> None:
+    if options.phase == OcrPhase.RECOGNIZE:
+        if options.layout_input_path is None:
+            raise click.ClickException("--layout-input is required for recognize")
+        layout_input_path = Path(options.layout_input_path)
+        if _is_direct_layout_artifact(layout_input_path) and len(source_paths) != 1:
+            raise click.ClickException(
+                "direct --layout-input artifact can only be used with one source document"
+            )
+    if options.phase == OcrPhase.LAYOUT and options.layout_output_dir is None:
+        raise click.ClickException("--layout-output is required for layout")
+
+
 def _resolve_pdf_range(
     path: Path,
     page_count: int,
@@ -271,8 +284,9 @@ def collect_document_jobs(
     start_page_id: int,
     end_page_id: int | None,
     resume: bool = False,
+    source_paths: list[Path] | None = None,
 ) -> list[DocumentJob]:
-    paths = _discover_documents(input_path)
+    paths = source_paths if source_paths is not None else _discover_documents(input_path)
     if not paths:
         raise click.ClickException(f"No supported documents found under {input_path}")
 
@@ -993,12 +1007,15 @@ async def run_document_ocr(
         raise click.ClickException("--max-windows must be at least 1")
     if options.max_http_concurrency_per_window < 1:
         raise click.ClickException("--max-http-concurrency-per-window must be at least 1")
+    source_paths = _discover_documents(options.input_path)
+    validate_phase_options(options, source_paths)
     jobs = collect_document_jobs(
         options.input_path,
         options.output_dir,
         start_page_id=options.start_page_id,
         end_page_id=options.end_page_id,
         resume=options.resume,
+        source_paths=source_paths,
     )
     if not jobs:
         return []
