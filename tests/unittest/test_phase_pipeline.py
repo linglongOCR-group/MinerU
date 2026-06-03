@@ -417,6 +417,82 @@ def test_read_pdf_layout_artifact_rejects_wrong_page_size(monkeypatch, tmp_path)
         raise AssertionError("Expected PDF layout artifact page size mismatch to fail")
 
 
+def test_read_multi_window_pdf_layout_artifact_validates_window_page_sizes(monkeypatch, tmp_path):
+    from mineru.cli import layout_artifact
+
+    pdf_path = tmp_path / "doc.pdf"
+    _make_pdf_placeholder(pdf_path)
+    rec_out = tmp_path / "rec_out"
+    job = document_ocr.DocumentJob.from_path(
+        pdf_path, "pdf", "doc", rec_out / "doc" / "vlm", 0, 4, 0, 3,
+    )
+    window_0 = document_ocr.WindowJob.from_document(job, 0, 0, 0, 1)
+    window_1 = document_ocr.WindowJob.from_document(job, 0, 1, 2, 3)
+    page_sizes = [[16, 12], [20, 14], [24, 18], [28, 22]]
+    stat = pdf_path.stat()
+    artifact = layout_artifact.LayoutArtifact(
+        schema="mineru.vlm.layout.v1",
+        stage="layout",
+        backend="vlm",
+        source=layout_artifact.LayoutSource(
+            path=str(pdf_path),
+            type="pdf",
+            size=stat.st_size,
+            mtime=stat.st_mtime,
+            page_count=4,
+            start_page_id=0,
+            end_page_id=3,
+        ),
+        layout=layout_artifact.LayoutMeta(
+            model="test-model",
+            layout_image_size=(1036, 1036),
+        ),
+        pages=[
+            layout_artifact.LayoutPage(
+                page_idx=page_idx,
+                page_size=page_size,
+                blocks=[],
+            )
+            for page_idx, page_size in enumerate(page_sizes)
+        ],
+    )
+    artifact_path = tmp_path / "layout_root" / "doc" / "vlm" / "doc_layout.json"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    layout_artifact.write_layout_artifact(artifact, artifact_path)
+
+    class FakeImage:
+        def __init__(self, size):
+            self.size = tuple(size)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(document_ocr, "open_pdfium_document", lambda *args: object())
+    monkeypatch.setattr(document_ocr, "close_pdfium_document", lambda _doc: None)
+    monkeypatch.setattr(
+        document_ocr,
+        "load_images_from_pdf_doc",
+        lambda *args, **kwargs: [
+            {"img_pil": FakeImage(page_sizes[page_idx])}
+            for page_idx in range(kwargs["start_page_id"], kwargs["end_page_id"] + 1)
+        ],
+    )
+    options = document_ocr.DocumentOcrOptions(
+        input_path=pdf_path,
+        output_dir=rec_out,
+        phase=document_ocr.OcrPhase.RECOGNIZE,
+        layout_input_path=tmp_path / "layout_root",
+    )
+
+    cache_0 = document_ocr.read_layout_window_cache_from_artifact(window_0, options)
+    cache_1 = document_ocr.read_layout_window_cache_from_artifact(window_1, options)
+
+    assert cache_0 is not None
+    assert cache_0["metadata"]["page_sizes"] == page_sizes[:2]
+    assert cache_1 is not None
+    assert cache_1["metadata"]["page_sizes"] == page_sizes[2:]
+
+
 def test_run_layout_phase_writes_layout_artifact(monkeypatch, tmp_path):
     """Layout phase produces _layout.json but NOT _model.json or .md."""
     from mineru.cli import layout_artifact

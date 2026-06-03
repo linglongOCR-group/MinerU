@@ -505,6 +505,8 @@ def read_layout_window_cache_from_artifact(
             end_page_id=window.document.end_page_id,
             page_count=window.document.page_count,
             page_sizes=_expected_source_page_sizes(window),
+            page_sizes_start_page_id=window.start_page_id,
+            page_sizes_end_page_id=window.end_page_id,
         )
     except Exception as exc:
         raise RuntimeError(f"Invalid layout artifact for {window.document_stem}: {exc}") from exc

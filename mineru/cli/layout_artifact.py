@@ -227,11 +227,14 @@ def validate_against_source(
     end_page_id: int,
     page_count: int | None = None,
     page_sizes: list[list[int]] | None = None,
+    page_sizes_start_page_id: int | None = None,
+    page_sizes_end_page_id: int | None = None,
 ) -> None:
     """Validate that *artifact* still matches *source_path* on disk.
 
-    Checks source identity, file metadata, page range, and optional page
-    metadata. Raises
+    Checks source identity, file metadata, document page range, and optional
+    page-size metadata. The page-size range defaults to the document range, but
+    may be narrowed for windowed consumers. Raises
     ``ValueError`` on any mismatch.
     """
     source_path = Path(source_path)
@@ -269,8 +272,14 @@ def validate_against_source(
         )
 
     if page_sizes is not None:
+        size_start_page_id = (
+            start_page_id if page_sizes_start_page_id is None else page_sizes_start_page_id
+        )
+        size_end_page_id = (
+            end_page_id if page_sizes_end_page_id is None else page_sizes_end_page_id
+        )
         pages_by_idx = {page.page_idx: page for page in artifact.pages}
-        for offset, page_idx in enumerate(range(start_page_id, end_page_id + 1)):
+        for offset, page_idx in enumerate(range(size_start_page_id, size_end_page_id + 1)):
             if offset >= len(page_sizes):
                 raise ValueError(f"Source page size missing for requested page {page_idx}")
             page = pages_by_idx.get(page_idx)
