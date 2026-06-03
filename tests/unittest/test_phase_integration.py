@@ -95,6 +95,54 @@ def test_layout_then_recognize_equals_full(tmp_path):
     assert full_blocks == recognize_cache["blocks_by_page"]
 
 
+def test_repeated_recognition_uses_one_layout_root_and_separate_outputs(tmp_path):
+    image_path = tmp_path / "doc.png"
+    Image.new("RGB", (16, 12), (255, 255, 255)).save(image_path)
+    calls = []
+
+    class FakeClient:
+        async def aio_layout_detect(self, image, priority=None, semaphore=None, scored=None):
+            calls.append("layout")
+            return ExtractResult([
+                ContentBlock("text", [0, 0, 1, 1]),
+            ])
+
+        async def aio_recognize_from_layout(self, image, layout_blocks, **kwargs):
+            calls.append("recognize")
+            suffix = len([call for call in calls if call == "recognize"])
+            for block in layout_blocks:
+                block.content = f"recognized-{suffix}"
+            return layout_blocks
+
+    layout_options = document_ocr.DocumentOcrOptions(
+        input_path=image_path,
+        output_dir=tmp_path / "layout_work",
+        phase=document_ocr.OcrPhase.LAYOUT,
+        layout_output_dir=tmp_path / "layout_artifacts",
+        progress=False,
+    )
+    asyncio.run(document_ocr.run_document_ocr(layout_options, client_factory=lambda _opts: FakeClient()))
+
+    for output_name in ["rec_a", "rec_b"]:
+        recognize_options = document_ocr.DocumentOcrOptions(
+            input_path=image_path,
+            output_dir=tmp_path / output_name,
+            phase=document_ocr.OcrPhase.RECOGNIZE,
+            layout_input_path=tmp_path / "layout_artifacts",
+            progress=False,
+        )
+        result = asyncio.run(document_ocr.run_document_ocr(recognize_options, client_factory=lambda _opts: FakeClient()))
+        assert result[0].status == "completed"
+
+    assert calls.count("layout") == 1
+    assert calls.count("recognize") == 2
+    assert (tmp_path / "layout_artifacts" / "doc" / "vlm" / "doc_layout.json").exists()
+    assert (tmp_path / "rec_a" / "doc" / "vlm" / "doc_model.json").exists()
+    assert (tmp_path / "rec_b" / "doc" / "vlm" / "doc_model.json").exists()
+    assert not (tmp_path / "rec_a" / "doc" / "vlm" / "doc_layout.json").exists()
+    assert not (tmp_path / "rec_b" / "doc" / "vlm" / "doc_layout.json").exists()
+
+
 def test_stale_layout_rejected(tmp_path):
     """Modified source file causes layout cache to be rejected."""
     image_path = tmp_path / "doc.png"
