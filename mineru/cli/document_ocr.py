@@ -117,7 +117,7 @@ class WindowJob:
         return self.end_page_id - self.start_page_id + 1
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class DocumentOcrOptions:
     input_path: Path
     output_dir: Path

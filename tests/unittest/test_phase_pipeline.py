@@ -43,6 +43,15 @@ def test_document_ocr_options_accept_explicit_layout_paths(tmp_path):
     assert opts.per_window_timeout == 42.0
 
 
+def test_document_ocr_options_rejects_positional_arguments(tmp_path):
+    try:
+        document_ocr.DocumentOcrOptions(tmp_path / "input", tmp_path / "out")
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("DocumentOcrOptions should be keyword-only")
+
+
 def test_document_ocr_options_phase_defaults_to_full():
     opts = document_ocr.DocumentOcrOptions(
         input_path=Path("/tmp/in"),
