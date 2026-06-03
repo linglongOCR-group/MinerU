@@ -446,7 +446,7 @@ def resolve_layout_output_dir(options: DocumentOcrOptions) -> Path:
 
 
 def _is_direct_layout_artifact(path: Path) -> bool:
-    return path.is_file() or path.suffix.lower() == ".json"
+    return path.is_file() or (path.suffix.lower() == ".json" and not path.is_dir())
 
 
 def resolve_layout_artifact_path(job: DocumentJob, options: DocumentOcrOptions) -> Path:

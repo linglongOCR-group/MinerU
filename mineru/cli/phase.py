@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 from pathlib import Path
 
 import click
@@ -165,7 +164,7 @@ def run(**kwargs):
 @_execution_options(include_page_window_size=True)
 @_layout_dissection_option
 def layout(**kwargs):
-    """Layout detection only. Outputs _layout.json per document."""
+    """Layout detection only. Outputs <stem>_layout.json and <stem>_status.json per document."""
     options = _build_layout_options(**kwargs)
     results = asyncio.run(run_document_ocr(options))
     completed = sum(r.status == "completed" for r in results)
